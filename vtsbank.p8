@@ -694,7 +694,7 @@ vtsbank {
         jmp p8b_vtsbank.p8s_affine.p8s_reset_fx
         * = next_code_addr    
     }}
-}
+} 
 
 
 
