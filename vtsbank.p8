@@ -676,7 +676,7 @@ vtsbank {
     }
 
     word_trig_table: 
-        %asmbinary "affine-trig.bin"
+        %asmbinary "RESOURCE/affine-trig.bin"
 
     %asm{{
     next_code_addr: = *
@@ -694,7 +694,7 @@ vtsbank {
         jmp p8b_vtsbank.p8s_affine.p8s_reset_fx
         * = next_code_addr    
     }}
-} 
+}
 
 
 
