@@ -1024,6 +1024,11 @@ frogfly {
     const uword TILE_VRAM_SIZE3            = 16 * 16 
     const uword TILE_VRAM_OFFSET3          = TILE_VRAM_ADDR3 - TILE_VRAM_ADDR1
 
+    const ubyte TILE_VRAM_BANK4            = TILE_VRAM_BANK3    ; t7-in
+    const uword TILE_VRAM_ADDR4            = TILE_VRAM_ADDR3 + TILE_VRAM_SIZE3
+    const uword TILE_VRAM_SIZE4            = 64 * 64
+    const uword TILE_VRAM_OFFSET4          = TILE_VRAM_ADDR4 - TILE_VRAM_ADDR1
+
     ; shorten the names
     alias sprite_size = sprites.SIZE_64
     alias sprite_size16 = sprites.SIZE_16
@@ -1035,8 +1040,10 @@ frogfly {
     ubyte[vts.VTS_CONTEXT_SIZE] context2    ; t7
     ubyte[vts.VTS_CONTEXT_SIZE] context3    ; t7-in
     ubyte[vts.VTS_CONTEXT_SIZE] context4    ; background kermit
+    ubyte[vts.VTS_CONTEXT_SIZE] context5    ; closed mouth kermit
+    ubyte[vts.VTS_CONTEXT_SIZE] context6    ; closed mouth kermit
 
-    uword[] @nosplit contexts = [ 0, context1, context2, context3, context4 ]
+    uword[] @nosplit contexts = [ 0, context1, context2, context3, context4, context5, context6 ]
 
     ubyte ccrc = 0
 
@@ -1050,6 +1057,8 @@ frogfly {
     bool forefrog = false
     float scale
 
+    ubyte key
+
     sub frog_n_fly() {
 
         ; clear the sprite buffers
@@ -1059,9 +1068,11 @@ frogfly {
         void diskio.f_read(&pathentries, 2)
 
         ; load the tile sets
-        void diskio.vload_raw("resource/kermit.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
+;        void diskio.vload_raw("resource/kermit.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
+        void diskio.vload_raw("kermit-open.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
         void diskio.vload_raw("resource/t7.bin-vts", TILE_VRAM_BANK2, TILE_VRAM_ADDR2)             ; $0100 long 
         void diskio.vload_raw("resource/t7-in.bin-vts", TILE_VRAM_BANK3, TILE_VRAM_ADDR3)          ; $0100 long 
+        void diskio.vload_raw("kermit-closed.bin-0vts", TILE_VRAM_BANK4, TILE_VRAM_ADDR4)        ; $1000 long 
 
         ; set up the sprites
         sprites.init(1,  ; foreground kermit 256
@@ -1106,6 +1117,20 @@ frogfly {
 
         void main.check_ccrc(4, ccrc)                                                                   
 
+        ccrc = vts.create_context( context5, ; background kermit
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
+                            SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3,
+                            64, false, TILE_VRAM_OFFSET4)      
+
+        void main.check_ccrc(5, ccrc)                                                                   
+
+        ccrc = vts.create_context( context6, ; background kermit
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
+                            SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                            64, false, TILE_VRAM_OFFSET4)      
+
+        void main.check_ccrc(5, ccrc)                                                                   
+
         ; transform the tile set into the sprite, full size, no rotation or shear
         ubyte i
         for i in 1 to 4 {
@@ -1113,9 +1138,14 @@ frogfly {
             vts.rotate(0)
         }
 
-        flyX = 374
+        flyX = 380
         flyY = 286
         scale = 1.0
+
+        txt.nl()
+        txt.nl()
+        txt.print("            Press ESC to quit - Press Spacebar to feed")
+
 
         ; show all three sprites
         sprites.pos(1, 320, 240)    ; foreground kermit
@@ -1130,10 +1160,14 @@ frogfly {
                 diskio.f_seek(0,(6 * p_entry[1]) + 2 as uword)
                 continue
             } else if entrytype == 0 {   
+                flyX = 380
+                flyY = 286
+                scale = 1.0
                 diskio.f_close()
                 void diskio.f_open("resource/path-360.bin") 
                 diskio.f_seek(0,2)
-                i--
+;                i--
+                i = 0 
                 continue
             }
             degree = mkword(p_entry[5] as ubyte, p_entry[4] as ubyte) as word
@@ -1163,13 +1197,58 @@ frogfly {
                 }                       
                 }
             }
+            when handlekey() {
+                1 -> {  ; caught fly
+                    break
+                }
+                2 -> {  ; quit
+                    return
+                }
+            }
         }  
         sys.wait(8)
+        vts.select(context5)  ; closed mouth kermit
+        vts.rotate(0)
 
         sprites.hide(2) 
-        txt.row(28)
-        txt.column(42)
+        txt.plot(42,28)
         txt.print("YUM!")
+    }
+
+    sub handlekey() -> ubyte {
+        ubyte count = 0
+        void, key = cbm.GETIN()
+        if_ne {
+            when key {
+                $20 -> { ; spacebar
+                    vts.select(context5)  ; closed mouth kermit
+                    vts.rotate(0)
+                    vts.select(context6)  ; closed mouth kermit
+                    vts.rotate(0)
+                    count = 12
+                    if not forefrog {
+                        if flyX in 325 to 365 {
+                            if flyY in 252 to 272 {
+                                return 1    ; caught fly
+                            }
+                        }
+                    }
+                }
+                $1B -> { ; esc
+                    cx16.kbdbuf_put($20)
+                    return 2  ; quit
+                }
+            }
+        } else {
+            if count == 0 {
+                vts.select(context1)  ; closed mouth kermit
+                vts.rotate(0)
+                vts.select(context4)  ; closed mouth kermit
+                vts.rotate(0)
+            }
+        }
+        if count > 0 count--
+        return 0 ; continue the looping
     }
     
 }
