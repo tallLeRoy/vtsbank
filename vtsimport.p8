@@ -9,7 +9,7 @@ vts {
 
     ubyte vtsbank
     
-    const uword VTS_TABLE = $BFD0
+    const uword VTS_TABLE = $A000
 
     ; called by load_vts_into_bank for bank initialization
     extsub @bank vtsbank VTS_TABLE + 0 = init()
@@ -73,4 +73,8 @@ vts {
 
     ; reset the VERA tile map transforms
     extsub @bank vtsbank VTS_TABLE + 30 = reset_fx() 
+
+    ; create a tile set from a sprite when the context is set
+    extsub @bank vtsbank VTS_TABLE + 33 = sprite_to_tile_set() 
+    
 }

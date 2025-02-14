@@ -13,12 +13,11 @@
 %zeropage basicsafe
 %option no_sysinit
 
-
 main {
     ; the VRAM space for the tile set is one tile larger than the sprite
     ; to insure tile zero is always blank
     const ubyte TILE_VRAM_BANK            = $01     ; $15000 - $1603F    
-    const uword TILE_VRAM_ADDR            = $5000   ; must start on 512 byte multiples
+    const uword TILE_VRAM_ADDR            = $5000   ; must start on 2048 byte multiples
     const uword TILE_VRAM_SIZE            = $1040   ; 4160
 
     ; the VRAM space for a 64x64 256 color sprite.
@@ -38,8 +37,6 @@ main {
     uword palette_name
     uword tile_offset
     bool  pad_tile_set
-
-
 
     sub start() {
         cbm.CINT()
@@ -69,6 +66,38 @@ main {
         alias b_rc = cx16.r14L  ; byte return code
         alias w_rc = cx16.r15   ; word return code
 
+/*
+        ; code to create the trig_table
+        const float CORNER_ANGLE = (floats.PI * 5.0) / 4.0
+        const float POSITION_OFFSET_64 = 31.0
+        const float DISTANCE_TO_CORNER_64 = 1.414214 * POSITION_OFFSET_64
+        diskio.delete("trig_table.txt")
+        if diskio.f_open_w("trig_table.txt") {
+            word  angle
+            float theta
+            word[4] @nosplit table_entry
+            for angle in 0.0 to 359.0 {
+                theta = floats.rad(angle as float)
+;                table_entry[0] = (floats.cos(theta) * 512.0) as word 
+                table_entry[1] = (floats.sin(theta) * 512.0) as word
+                table_entry[2] = (((floats.cos(CORNER_ANGLE + theta as float) * DISTANCE_TO_CORNER_64) + (POSITION_OFFSET_64 as float)) * 256.0) as word
+                table_entry[3] = (((floats.sin(CORNER_ANGLE + theta as float) * DISTANCE_TO_CORNER_64) + (POSITION_OFFSET_64 as float)) * 256.0) as word
+                diskio.f_write("\n        .word  $", 17)
+                conv.str_uwhex(table_entry[1] as uword)
+                diskio.f_write(conv.string_out, 4)
+                diskio.f_write(",  $", 4)
+                conv.str_uwhex(table_entry[2] as uword)
+                diskio.f_write(conv.string_out, 4)
+                diskio.f_write(",  $", 4)
+                conv.str_uwhex(table_entry[3] as uword)
+                diskio.f_write(conv.string_out, 4)
+                diskio.f_write("    ; ", 6)
+                conv.str_w(angle as word)
+                diskio.f_write(conv.string_out, 4)
+            }
+            diskio.f_close_w()
+        }
+*/
         do {
             ; restore the default palette 
             dest = $FA00
@@ -84,7 +113,7 @@ main {
 
             ; display the choices for the user
             repeat 3 txt.nl()
-            txt.print("  Select the tile set for demonstation.")
+            txt.print("  Select the tile set for demonstration.")
             repeat 3 txt.nl()
             txt.print("  1 - 64x64 256 color sprite ")
             repeat 3 txt.nl()
@@ -106,13 +135,15 @@ main {
             repeat 3 txt.nl()
             txt.print("  F - The tale of the frog and the fly ")
             repeat 3 txt.nl()
+            txt.print("  G - Ghosting")
+            repeat 3 txt.nl()
             txt.print("  0 - Exit the demonstration ")
             repeat 3 txt.nl()
             txt.print("  Enter the number of your choice [0-6] ")
             ubyte key = txt.waitkey() - $30
             txt.print_ub(key)
             when key {
-                1,2,3,4,5,6,7,8,9,22,54 -> {
+                1,2,3,4,5,6,7,8,9,22,23,54,55 -> {
                             figure = key
                         } 
                 else -> {
@@ -140,10 +171,10 @@ main {
                         sprite_size   = sprites.SIZE_64
                         sprite_colors = sprites.COLORS_16
                         sprite_palette = 8
-                        vts_name = "resource/turtle_0.bin-0vts"
+                        vts_name = "resource/turtle-0.bin-0vts"
                         tile_offset = 0
                     }
-                    3 -> {
+                    3 -> { 
                         ; the large pink ghost in 256 colors
                         sprite_size   = sprites.SIZE_64
                         sprite_colors = sprites.COLORS_256
@@ -165,7 +196,7 @@ main {
                         ; the small pink ghost in 256 colors
                         sprite_size   = sprites.SIZE_16
                         sprite_colors = sprites.COLORS_256
-                        sprite_palette = 6
+                        sprite_palette = 0
                         vts_name = "resource/t9.bin-vts"
                         palette_name = 0
                         tile_offset = 64
@@ -213,7 +244,14 @@ main {
                         void txt.waitkey()
                         txt.cls()
                         continue
-                    }                    
+                    }    
+                    23,55 -> {     ; g or G
+                        txt.cls()
+                        ghosting.ghost()
+                        void txt.waitkey()
+                        txt.cls()
+                        continue
+                    }                
                 }
 
                 ; create a sprite to show our rotations and scaling
@@ -272,7 +310,14 @@ main {
 
                 ; position the sprite on screen
                 sprites.pos(1, 320,240)                       
-
+    
+                txt.cls()
+;                void txt.waitkey()
+;                verafx.clear(TILE_VRAM_BANK, TILE_VRAM_ADDR, $00, TILE_VRAM_SIZE / 4)    
+;                vts.reverse()
+;                vts.rotate_f(0)
+;                void txt.waitkey()                
+    
                 ; perform some transforms
                 show_capabilities()
 
@@ -293,6 +338,7 @@ main {
 
         } until figure == 0  ; exit request
 
+        txt.iso_off()
         txt.cls()
         
     }
@@ -315,15 +361,15 @@ main {
         repeat 4 {
             repeat 28 {
                 vts.shear_h(value)
-                value += 4
+                value += 6
             }
             repeat 56 {
                 vts.shear_h(value)
-                value -= 4
+                value -= 6
             }
             repeat 28 {
                 vts.shear_h(value)
-                value += 4
+                value += 6
             }
             vts.shear_h(value)
         }
@@ -761,8 +807,8 @@ dozen {
         verafx.clear(SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1, $00, $1000) ; clear r buffers
 
         ; load the tile sets
-;        void diskio.vload_raw("resource/turtle_0.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)      ; $0800 long
-;        void diskio.vload_raw("resource/enemy_type_d.bin-0vts", TILE_VRAM_BANK2, TILE_VRAM_ADDR2)  ; $1000 long
+;        void diskio.vload_raw("resource/turtle-0.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)      ; $0800 long
+;        void diskio.vload_raw("resource/enemy-type-d.bin-0vts", TILE_VRAM_BANK2, TILE_VRAM_ADDR2)  ; $1000 long
 ;        void diskio.vload_raw("resource/profile.bin-0vts", TILE_VRAM_BANK3, TILE_VRAM_ADDR3)       ; $1000 long
 ;        void diskio.vload_raw("resource/kermit.bin-0vts", TILE_VRAM_BANK4, TILE_VRAM_ADDR4)        ; $1000 long 
 ;        void diskio.vload_raw("resource/t1.bin-vts", TILE_VRAM_BANK5, TILE_VRAM_ADDR5)            ; $0100 long 
@@ -817,11 +863,11 @@ dozen {
         sprites.init(10,  ; t9 256
                      SPRITE_VRAM_BANK10, SPRITE_VRAM_ADDR10,
                      sprite_size16, sprite_size16,
-                     colors256, 6)
+                     colors256, 0)
         sprites.init(11,  ; t7 256
                      SPRITE_VRAM_BANK11, SPRITE_VRAM_ADDR11,
                      sprite_size16, sprite_size16,
-                     colors256, 6)
+                     colors256, 0)
         sprites.init(12,  ; t8 256
                      SPRITE_VRAM_BANK12, SPRITE_VRAM_ADDR12,
                      sprite_size16, sprite_size16,
@@ -1056,6 +1102,7 @@ frogfly {
     byte entrytype = 0
     bool forefrog = false
     float scale
+    bool reverseX
 
     ubyte key
 
@@ -1069,10 +1116,10 @@ frogfly {
 
         ; load the tile sets
 ;        void diskio.vload_raw("resource/kermit.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
-        void diskio.vload_raw("kermit-open.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
+        void diskio.vload_raw("resource/kermit-open.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
         void diskio.vload_raw("resource/t7.bin-vts", TILE_VRAM_BANK2, TILE_VRAM_ADDR2)             ; $0100 long 
         void diskio.vload_raw("resource/t7-in.bin-vts", TILE_VRAM_BANK3, TILE_VRAM_ADDR3)          ; $0100 long 
-        void diskio.vload_raw("kermit-closed.bin-0vts", TILE_VRAM_BANK4, TILE_VRAM_ADDR4)        ; $1000 long 
+        void diskio.vload_raw("resource/kermit-closed.bin-0vts", TILE_VRAM_BANK4, TILE_VRAM_ADDR4)        ; $1000 long 
 
         ; set up the sprites
         sprites.init(1,  ; foreground kermit 256
@@ -1082,7 +1129,7 @@ frogfly {
         sprites.init(2,  ; t7 / t7-in 256
                      SPRITE_VRAM_BANK2, SPRITE_VRAM_ADDR2,
                      sprite_size16, sprite_size16,
-                     colors256, 6)
+                     colors256, 0)
         sprites.init(3,  ; background kermit 256
                      SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3,
                      sprite_size, sprite_size,
@@ -1144,13 +1191,15 @@ frogfly {
 
         txt.nl()
         txt.nl()
-        txt.print("            Press ESC to quit - Press Spacebar to feed")
+        txt.print("            Press ESC to quit - Press Spacebar to Chomp")
 
 
         ; show all three sprites
         sprites.pos(1, 320, 240)    ; foreground kermit
         sprites.pos(2, flyX, flyY)  ; fly
         sprites.pos(3, 320, 240)    ; background kermit
+
+        reverseX = false
 
         for i in 0 to 253 {
             void diskio.f_read(&p_entry, 6)
@@ -1166,8 +1215,8 @@ frogfly {
                 diskio.f_close()
                 void diskio.f_open("resource/path-360.bin") 
                 diskio.f_seek(0,2)
-;                i--
                 i = 0 
+                reverseX = not reverseX
                 continue
             }
             degree = mkword(p_entry[5] as ubyte, p_entry[4] as ubyte) as word
@@ -1180,21 +1229,25 @@ frogfly {
                 vts.scale(scale)
                 vts.rotate(degree)
                 sys.wait(wingwait)
-                flyX += p_entry[2]
+                if reverseX {
+                    flyX -= p_entry[2]
+                } else {
+                    flyX += p_entry[2]
+                }
                 flyY -= p_entry[3]
                 sprites.pos(2,flyX, flyY)
                 scale += p_entry[3] * 0.0032
             }
             if i % 16 == 0 {
                 if 360 > flyX or flyX < 280 {
-                ; toggle foreground kermit 
-                if forefrog {
-                    sprites.hide(1)
-                    forefrog = false
-                } else {
-                    sprites.show(1)
-                    forefrog = true
-                }                       
+                    ; toggle foreground kermit 
+                    if forefrog {
+                        sprites.hide(1)
+                        forefrog = false
+                    } else {
+                        sprites.show(1)
+                        forefrog = true
+                    }                       
                 }
             }
             when handlekey() {
@@ -1251,6 +1304,137 @@ frogfly {
         return 0 ; continue the looping
     }
     
+}
+
+ghosting {
+    const ubyte SPRITE_VRAM_BANK1          = $01                ; ghost
+    const uword SPRITE_VRAM_ADDR1          = $3000  
+    const uword SPRITE_VRAM_SIZE1          = 64 * 64
+
+    const ubyte TILE_VRAM_BANK1            = SPRITE_VRAM_BANK1      ; upright ghost
+    const uword TILE_VRAM_ADDR1            = SPRITE_VRAM_ADDR1 + SPRITE_VRAM_SIZE1  
+    const uword TILE_VRAM_SIZE1            = 64 * 64
+    const uword TILE_VRAM_OFFSET1          = 0
+
+    const ubyte TILE_VRAM_BANK2            = TILE_VRAM_BANK1        ; sheared ghost
+    const uword TILE_VRAM_ADDR2            = TILE_VRAM_ADDR1 + TILE_VRAM_SIZE1
+    const uword TILE_VRAM_SIZE2            = 64 * 64 
+    const uword TILE_VRAM_OFFSET2          = 0
+
+    alias sprite_size = sprites.SIZE_64
+    alias colors256 = sprites.COLORS_256
+
+    ubyte[vts.VTS_CONTEXT_SIZE] context1    ; upright ghost
+    ubyte[vts.VTS_CONTEXT_SIZE] context2    ; sheared ghost
+
+    ubyte ccrc = 0
+
+    sub ghost() {
+
+        ; clear the sprite buffers
+        verafx.clear(SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1, $00, $1000) ; clear r buffers
+
+        ; load the tile sets
+        void diskio.vload_raw("resource/lghost8.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)   
+
+        ; set up the sprite
+        sprites.init(1,  ; foreground kermit 256
+                     SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                     sprite_size, sprite_size,
+                     colors256, 0)
+
+        ; create a context for each tile set          
+        ccrc = vts.create_context( context1, ; upright ghost
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
+                            SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                            64, false, TILE_VRAM_OFFSET1)      
+
+        void main.check_ccrc(1, ccrc)                                                                   
+
+        ccrc = vts.create_context( context2, ; sheared ghost
+                            TILE_VRAM_BANK2, TILE_VRAM_ADDR2,
+                            SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                            64, false, TILE_VRAM_OFFSET2)      
+
+        void main.check_ccrc(2, ccrc)                                                                   
+
+        word xpos = 320
+        word ypos = 240
+        word angle = 0
+
+        ; show the ghost
+        vts.select(context1)
+        vts.rotate(angle)
+
+        sprites.pos(1, xpos, ypos)    ; ghost
+
+        vts.shear_h(120)
+
+        vts.select(context2)
+        vts.sprite_to_tile_set()
+
+        const ubyte steps = 200
+        repeat steps {
+            sprites.setx(1,xpos)
+            xpos++
+            delay()
+        }
+        repeat 15 {
+            angle -= 6
+            vts.rotate(angle)
+            delay()
+        }
+;        vts.rotate(-90)
+        repeat steps {
+            sprites.sety(1,ypos)
+            ypos--
+            delay()
+        }
+        sprites.flipx(1,true)
+        repeat 15 {
+            angle += 6
+            vts.rotate(angle)
+            delay()
+        }
+        repeat steps * 2 {
+            sprites.setx(1,xpos)
+            xpos--
+            delay()
+        }
+        repeat 15 {
+            angle += 6
+            vts.rotate(angle)
+            delay()
+        }
+        repeat steps {
+            sprites.sety(1,ypos)
+            ypos++
+            delay()
+        }
+        sprites.flipx(1,false)
+        repeat 15 {
+            angle -= 6
+            vts.rotate(angle)
+            delay()
+        }
+        repeat steps {
+            sprites.setx(1,xpos)
+            xpos++
+            delay()
+        }
+
+        vts.select(context1)
+        vts.rotate(angle)
+
+    }
+
+    sub delay() {
+        float f = floats.PI
+        repeat 400 {
+            f /= .003
+            f = floats.PI
+        }
+    }
 }
 
 
