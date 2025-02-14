@@ -14,8 +14,23 @@
 %import floats
 %import diskio
 %import math
+%import sprites
 
 main {
+    %jmptable (
+        vtsbank.affine.create_context,
+        vtsbank.affine.select,
+        vtsbank.affine.set_scale,
+        vtsbank.affine.rotate_i,
+        vtsbank.affine.rotate_f,    
+        vtsbank.affine.rotate_r,    
+        vtsbank.affine.rotate_p,  
+        vtsbank.affine.shear_v,  
+        vtsbank.affine.shear_h,  
+        vtsbank.affine.reset_fx,
+        vtsbank.affine.sprite_to_tile_set,
+    )
+
     sub start() {
     }
 }
@@ -23,15 +38,12 @@ main {
 vtsbank {
     %option force_output
 
-    const uword SIZE_WORD_TRIG_TABLE_ENTRY = 4 * sys.SIZEOF_WORD
+    const uword SIZE_WORD_TRIG_TABLE_ENTRY = 3 * sys.SIZEOF_WORD
 
     ; word_trig_table entry offsets
-    const ubyte TBL_COSINE  = 0
-    const ubyte TBL_SINE    = 2
-    const ubyte TBL_64_XPOS = 4
-    const ubyte TBL_64_YPOS = 6
-    
-    const uword SIZE_WORD_TRIG_TABLE = 360 * SIZE_WORD_TRIG_TABLE_ENTRY
+    const ubyte TBL_SINE    = 0
+    const ubyte TBL_64_XPOS = 2
+    const ubyte TBL_64_YPOS = 4
 
     alias temp    = cx16.r12
     alias wangle  = cx16.r13s
@@ -148,8 +160,8 @@ vtsbank {
             return AFF_CREATE_OK
         }
 
-        const ubyte POSITION_OFFSET_64 = 32
-        const ubyte POSITION_OFFSET_16 = 8
+        const ubyte POSITION_OFFSET_64 = 31
+        const ubyte POSITION_OFFSET_16 = 7
         ; DISTANCE_TO_CORNER = SQUARE_ROOT_2 * position_offset
         const float DISTANCE_TO_CORNER_64 = 1.414214 * POSITION_OFFSET_64
         const float DISTANCE_TO_CORNER_16 = 1.414214 * POSITION_OFFSET_16
@@ -533,30 +545,17 @@ vtsbank {
                 tbl = get_table_entry(wangle)
 
                 cx16.VERA_CTRL = %0000_0110     ; DCSEL = 3, ADDRSEL = 0
+
                 if use_scale { ; slower with floating point for scaling
-                    w_cosine = (((peekw(tbl+TBL_COSINE) as word) as float) * scale) as word 
+                    w_cosine = (get_cosine(wangle) as float) * scale as word
                     w_sine = (((peekw(tbl+TBL_SINE) as word) as float) * scale) as word 
-                    cx16.VERA_FX_X_INCR = (w_cosine  & $7FFF)  as uword
-                    cx16.VERA_FX_Y_INCR = (w_sine  & $7FFF)  as uword
                 } else {
-                    ; faster without floats and scaling
-                    %asm{{
-                        ldy #$00
-                        lda ($1a),y             ; peekw(tbl+0)
-                        iny
-                        sta cx16.VERA_FX_X_INCR
-                        lda ($1a),y
-                        iny
-                        and #$7F
-                        sta cx16.VERA_FX_X_INCR+1
-                        lda ($1a),y             ; peekw(tbl+2)
-                        iny
-                        sta cx16.VERA_FX_Y_INCR
-                        lda ($1a),y
-                        and #$7F
-                        sta cx16.VERA_FX_Y_INCR+1
-                    }}       
+                    w_cosine = get_cosine(wangle)
+                    w_sine = peekw(tbl+TBL_SINE) as word
                 }
+
+                cx16.VERA_FX_X_INCR = (w_cosine  & $7FFF)  as uword
+                cx16.VERA_FX_Y_INCR = (w_sine  & $7FFF)  as uword
 
                 ; load the starting position for the affine transfer
                 x_position = peekw(tbl+TBL_64_XPOS) as word
@@ -573,13 +572,8 @@ vtsbank {
                 set_next()
 
                 ; now set the incs up for the next 63 lines
-                if use_scale {
-                    x_inc = -(w_sine / 2)          ; efficientcy for cosine(theta + 90) * 256
-                    y_inc = (w_cosine / 2)         ; efficientcy for sine(theta + 90) * 256
-                } else {
-                    x_inc = -(peekw(tbl+TBL_SINE) as word) / 2  ; x_inc efficientcy for cosine(wangle + 90) * 256
-                    y_inc = peekw(tbl+TBL_COSINE) as word / 2     ; y_inc efficientcy for sine(wangle + 90) * 256
-                }
+                x_inc = -(w_sine / 2)          ; efficientcy for cosine(theta + 90) * 256
+                y_inc = (w_cosine / 2)         ; efficientcy for sine(theta + 90) * 256
                 
                 cx16.VERA_CTRL = 0              ; DCSET = 0, ADDREL = 0
             }
@@ -671,377 +665,556 @@ vtsbank {
             return (&word_trig_table + (angle * SIZE_WORD_TRIG_TABLE_ENTRY)) as uword    
         }
 
+/*
+        sub get_64_ypos(word angle @R5) -> word {
+            ; modify the angle to look up the YPOS in the XPOS table. 
+            ; saves over 500 bytes to do this
+            %asm{{
+    			cmp  #<0              ; is the angle 0
+    			bne  +
+    			cpy  #>0
+    			beq  set_return_code
+    			cmp  #<180            ; is the angle 180
+    			bne  +
+    			cpy  #>180
+    			beq  set_return_code
+    			cmp  #<360            ; is the angle 360
+    			bne  +
+    			cpy  #>360
+    			beq  set_return_code
+
+            less_than_46    
+                cmp  #<$2e
+                tya
+                sbc  #>$2e
+                bvs  +
+                eor  #128
+            +   bmi  less_than_90
+                lda  p8v_angle
+                clc
+                adc  #<270
+                sta  p8v_angle
+                lda  p8v_angle+1
+                adc  #>270
+                sta  p8v_angle+1
+                bra  set_return_code
+
+            less_than_90
+                lda  p8v_angle
+                cmp  #<$5a
+                tya
+                sbc  #>$5a
+                bvs  +
+                eor  #128
+            +   bmi  less_than_226
+                lda  #0
+                sec
+                sbc  p8v_angle
+                sta  p8v_angle
+                lda  #0
+                sbc  p8v_angle+1
+                sta  p8v_angle+1
+                lda  p8v_angle
+                clc
+                adc  #<360
+                sta  p8v_angle
+                lda  p8v_angle+1
+                adc  #>360
+                sta  p8v_angle+1
+                bra  set_return_code
+                
+            less_than_226
+                lda  p8v_angle
+                cmp  #<$e2
+                tya
+                sbc  #>$e2
+                bvs  +
+                eor  #128
+            +   bmi  greater_than_225
+                lda  p8v_angle
+                sec
+                sbc  #90
+                sta  p8v_angle
+                bcs  +
+                dec  p8v_angle+1
+			+	bra  set_return_code
+
+            greater_than_225
+                lda  p8v_angle
+                sec
+                sbc  #<$e1
+                tax
+                tya
+                sbc  #>$e1
+                tay
+                txa
+                sta  P8ZP_SCRATCH_W1
+                sty  P8ZP_SCRATCH_W1+1
+                ldy  #>$87
+                lda  #<$87
+                sec
+                sbc  P8ZP_SCRATCH_W1
+                tax
+                tya
+                sbc  P8ZP_SCRATCH_W1+1
+                tay
+                txa
+                sta  p8v_angle
+                sty  p8v_angle+1
+
+            set_return_code
+            }}
+
+;            repeat 1 {
+;                if angle in [0 ,180 as word] { ; angle as is
+;                    break
+;                }
+;                if angle < 46 {                ; angle assending much higher 
+;                    angle += 270
+;                    break
+;                }
+;                if angle < 90 {
+;                    angle = 360 - angle         ; angle descending
+;                    break
+;                } 
+;                if angle < 226 {
+;                    angle -= 90                 ; angle descending
+;                    break
+;                }
+;                angle = 135 - (angle - 225)     ; angle decending from 135
+;            }  
+            return peekw(vtsbank.affine.get_table_entry(angle) + TBL_64_XPOS) as word   
+        }
+*/
+        sub get_cosine(word angle) -> word {
+            ; use sine/cosine phase relationship to get cosine from the sine table
+            return peekw(get_table_entry(90 - angle) + TBL_SINE) as word
+        }
+
+        ; put the sprite buffer into the tile set buffer as tiles
+        ; uses the selected context
+        sub sprite_to_tile_set() {
+            alias row_next_tile = cx16.r10
+            alias row_next_set  = cx16.r11
+            alias tile_width    = cx16.r12L
+            alias tile_size     = cx16.r12H
+            alias tile_rows     = cx16.r13L
+            alias tile_columns  = cx16.r13H
+            alias tile_addr_reg = cx16.r14L
+            alias tile_bank     = cx16.r14H
+            alias tile_addr     = cx16.r15
+
+            alias sprite_byte   = cx16.VERA_DATA0
+            alias tile_byte     = cx16.VERA_DATA1
+
+            tile_width = if peek(this + AFF_4BIT) != 0 4 else 8
+            tile_size = tile_width * 8
+            tile_rows = peek(this + AFF_SPRITE_SIZE) / 8
+            tile_columns = tile_rows
+            row_next_tile = tile_width * tile_columns
+            row_next_set = row_next_tile as uword * 8
+
+            tile_addr_reg = peek(this + AFF_VADDR)
+            tile_bank = tile_addr_reg >> 7
+            tile_addr = tile_addr_reg & %0111_1100
+            tile_addr <<= 9
+            tile_addr += peek(this + AFF_TILE_MAP) as uword * tile_size
+
+            cx16.VERA_CTRL = 1
+            cx16.VERA_ADDR = tile_addr
+            cx16.VERA_ADDR_H = tile_bank | $10 ; increment by one
+
+            cx16.VERA_CTRL = 0
+            cx16.VERA_ADDR = peekw(this + AFF_SPRITE_DATA_VADDR)
+            cx16.VERA_ADDR_H = peek(this + AFF_SPRITE_DATA_BANK) | $10 ; increment by one
+
+            ; move the bytes from sprite to tile set
+            repeat tile_rows {
+                sys.pushw(cx16.VERA_ADDR + row_next_set)
+                repeat tile_columns {
+                    sys.pushw(cx16.VERA_ADDR + tile_width)
+                    repeat 8 {
+                        sys.pushw(cx16.VERA_ADDR + row_next_tile)
+                        repeat tile_width {
+                            tile_byte = sprite_byte
+                        }
+                        cx16.VERA_ADDR = sys.popw()
+                    }
+                    cx16.VERA_ADDR = sys.popw()
+                }
+                cx16.VERA_ADDR = sys.popw()
+            }
+        }
     }
 
     word_trig_table: 
-;        %asmbinary "RESOURCE/affine-trig.bin"
     %asm{{
         ; entries for 0 through 359
-        ; TBL_COSINE TBL_SINE TBL_64_XPOS TBL_64_YPOS 
-        .word  $01FF, $0000, $0000, $0000
-        .word  $01FF, $0008, $0090, $FF72
-        .word  $01FF, $0011, $0122, $FEE7
-        .word  $01FF, $001A, $01B7, $FE5E
-        .word  $01FE, $0023, $024F, $FDD8
-        .word  $01FE, $002C, $02E9, $FD55
-        .word  $01FD, $0035, $0385, $FCD4
-        .word  $01FC, $003E, $0423, $FC56
-        .word  $01FB, $0047, $04C3, $FBDB
-        .word  $01F9, $0050, $0566, $FB63
-        .word  $01F8, $0058, $060A, $FAED
-        .word  $01F6, $0061, $06B1, $FA7B
-        .word  $01F4, $006A, $075A, $FA0B
-        .word  $01F2, $0073, $0804, $F99F
-        .word  $01F0, $007B, $08B1, $F935
-        .word  $01EE, $0084, $095F, $F8CE
-        .word  $01EC, $008D, $0A0F, $F86B
-        .word  $01E9, $0095, $0AC1, $F80A
-        .word  $01E6, $009E, $0B74, $F7AD
-        .word  $01E4, $00A6, $0C29, $F753
-        .word  $01E1, $00AF, $0CDF, $F6FC
-        .word  $01DD, $00B7, $0D97, $F6A8
-        .word  $01DA, $00BF, $0E51, $F657
-        .word  $01D7, $00C8, $0F0C, $F60A
-        .word  $01D3, $00D0, $0FC8, $F5C0
-        .word  $01D0, $00D8, $1085, $F579
-        .word  $01CC, $00E0, $1144, $F535
-        .word  $01C8, $00E8, $1203, $F4F5
-        .word  $01C4, $00F0, $12C4, $F4B8
-        .word  $01BF, $00F8, $1386, $F47F
-        .word  $01BB, $00FF, $1449, $F449
-        .word  $01B6, $0107, $150D, $F416
-        .word  $01B2, $010F, $15D1, $F3E7
-        .word  $01AD, $0116, $1697, $F3BB
-        .word  $01A8, $011E, $175D, $F393
-        .word  $01A3, $0125, $1824, $F36E
-        .word  $019E, $012C, $18EB, $F34D
-        .word  $0198, $0134, $19B3, $F32F
-        .word  $0193, $013B, $1A7C, $F315
-        .word  $018D, $0142, $1B45, $F2FE
-        .word  $0188, $0149, $1C0E, $F2EA
-        .word  $0182, $014F, $1CD7, $F2DA
-        .word  $017C, $0156, $1DA1, $F2CE
-        .word  $0176, $015D, $1E6B, $F2C5
-        .word  $0170, $0163, $1F35, $F2C0
-        .word  $016A, $016A, $2000, $F2BE
-        .word  $0163, $0170, $20CA, $F2C0
-        .word  $015D, $0176, $2194, $F2C5
-        .word  $0156, $017C, $225E, $F2CE
-        .word  $014F, $0182, $2328, $F2DA
-        .word  $0149, $0188, $23F1, $F2EA
-        .word  $0142, $018D, $24BA, $F2FE
-        .word  $013B, $0193, $2583, $F315
-        .word  $0134, $0198, $264C, $F32F
-        .word  $012C, $019E, $2714, $F34D
-        .word  $0125, $01A3, $27DB, $F36E
-        .word  $011E, $01A8, $28A2, $F393
-        .word  $0116, $01AD, $2968, $F3BB
-        .word  $010F, $01B2, $2A2E, $F3E7
-        .word  $0107, $01B6, $2AF2, $F416
-        .word  $00FF, $01BB, $2BB6, $F449
-        .word  $00F8, $01BF, $2C79, $F47F
-        .word  $00F0, $01C4, $2D3B, $F4B8
-        .word  $00E8, $01C8, $2DFC, $F4F5
-        .word  $00E0, $01CC, $2EBB, $F535
-        .word  $00D8, $01D0, $2F7A, $F579
-        .word  $00D0, $01D3, $3037, $F5C0
-        .word  $00C8, $01D7, $30F3, $F60A
-        .word  $00BF, $01DA, $31AE, $F657
-        .word  $00B7, $01DD, $3268, $F6A8
-        .word  $00AF, $01E1, $3320, $F6FC
-        .word  $00A6, $01E4, $33D6, $F753
-        .word  $009E, $01E6, $348B, $F7AD
-        .word  $0095, $01E9, $353E, $F80A
-        .word  $008D, $01EC, $35F0, $F86B
-        .word  $0084, $01EE, $36A0, $F8CE
-        .word  $007B, $01F0, $374E, $F935
-        .word  $0073, $01F2, $37FB, $F99F
-        .word  $006A, $01F4, $38A5, $FA0B
-        .word  $0061, $01F6, $394E, $FA7B
-        .word  $0058, $01F8, $39F5, $FAED
-        .word  $0050, $01F9, $3A99, $FB63
-        .word  $0047, $01FB, $3B3C, $FBDB
-        .word  $003E, $01FC, $3BDC, $FC56
-        .word  $0035, $01FD, $3C7A, $FCD4
-        .word  $002C, $01FE, $3D16, $FD55
-        .word  $0023, $01FE, $3DB0, $FDD8
-        .word  $001A, $01FF, $3E48, $FE5E
-        .word  $0011, $01FF, $3EDD, $FEE7
-        .word  $0008, $01FF, $3F6F, $FF72
-        .word  $0000, $01FF, $3FFF, $FFFF
-        .word  $FFF7, $01FF, $408D, $0090
-        .word  $FFEE, $01FF, $4118, $0122
-        .word  $FFE5, $01FF, $41A1, $01B7
-        .word  $FFDC, $01FE, $4227, $024F
-        .word  $FFD3, $01FE, $42AA, $02E9
-        .word  $FFCA, $01FD, $432B, $0385
-        .word  $FFC1, $01FC, $43A9, $0423
-        .word  $FFB8, $01FB, $4424, $04C3
-        .word  $FFAF, $01F9, $449C, $0566
-        .word  $FFA7, $01F8, $4512, $060A
-        .word  $FF9E, $01F6, $4584, $06B1
-        .word  $FF95, $01F4, $45F4, $075A
-        .word  $FF8C, $01F2, $4660, $0804
-        .word  $FF84, $01F0, $46CA, $08B1
-        .word  $FF7B, $01EE, $4731, $095F
-        .word  $FF72, $01EC, $4794, $0A0F
-        .word  $FF6A, $01E9, $47F5, $0AC1
-        .word  $FF61, $01E6, $4852, $0B74
-        .word  $FF59, $01E4, $48AC, $0C29
-        .word  $FF50, $01E1, $4903, $0CDF
-        .word  $FF48, $01DD, $4957, $0D97
-        .word  $FF40, $01DA, $49A8, $0E51
-        .word  $FF37, $01D7, $49F5, $0F0C
-        .word  $FF2F, $01D3, $4A3F, $0FC8
-        .word  $FF27, $01D0, $4A86, $1085
-        .word  $FF1F, $01CC, $4ACA, $1144
-        .word  $FF17, $01C8, $4B0A, $1203
-        .word  $FF0F, $01C4, $4B47, $12C4
-        .word  $FF07, $01BF, $4B80, $1386
-        .word  $FF00, $01BB, $4BB6, $1449
-        .word  $FEF8, $01B6, $4BE9, $150D
-        .word  $FEF0, $01B2, $4C18, $15D1
-        .word  $FEE9, $01AD, $4C44, $1697
-        .word  $FEE1, $01A8, $4C6C, $175D
-        .word  $FEDA, $01A3, $4C91, $1824
-        .word  $FED3, $019E, $4CB2, $18EB
-        .word  $FECB, $0198, $4CD0, $19B3
-        .word  $FEC4, $0193, $4CEA, $1A7C
-        .word  $FEBD, $018D, $4D01, $1B45
-        .word  $FEB6, $0188, $4D15, $1C0E
-        .word  $FEB0, $0182, $4D25, $1CD7
-        .word  $FEA9, $017C, $4D31, $1DA1
-        .word  $FEA2, $0176, $4D3A, $1E6B
-        .word  $FE9C, $0170, $4D3F, $1F35
-        .word  $FE95, $016A, $4D41, $2000
-        .word  $FE8F, $0163, $4D3F, $20CA
-        .word  $FE89, $015D, $4D3A, $2194
-        .word  $FE83, $0156, $4D31, $225E
-        .word  $FE7D, $014F, $4D25, $2328
-        .word  $FE77, $0149, $4D15, $23F1
-        .word  $FE72, $0142, $4D01, $24BA
-        .word  $FE6C, $013B, $4CEA, $2583
-        .word  $FE67, $0134, $4CD0, $264C
-        .word  $FE61, $012C, $4CB2, $2714
-        .word  $FE5C, $0125, $4C91, $27DB
-        .word  $FE57, $011E, $4C6C, $28A2
-        .word  $FE52, $0116, $4C44, $2968
-        .word  $FE4D, $010F, $4C18, $2A2E
-        .word  $FE49, $0107, $4BE9, $2AF2
-        .word  $FE44, $0100, $4BB6, $2BB6
-        .word  $FE40, $00F8, $4B80, $2C79
-        .word  $FE3B, $00F0, $4B47, $2D3B
-        .word  $FE37, $00E8, $4B0A, $2DFC
-        .word  $FE33, $00E0, $4ACA, $2EBB
-        .word  $FE2F, $00D8, $4A86, $2F7A
-        .word  $FE2C, $00D0, $4A3F, $3037
-        .word  $FE28, $00C8, $49F5, $30F3
-        .word  $FE25, $00BF, $49A8, $31AE
-        .word  $FE22, $00B7, $4957, $3268
-        .word  $FE1E, $00AF, $4903, $3320
-        .word  $FE1B, $00A6, $48AC, $33D6
-        .word  $FE19, $009E, $4852, $348B
-        .word  $FE16, $0095, $47F5, $353E
-        .word  $FE13, $008D, $4794, $35F0
-        .word  $FE11, $0084, $4731, $36A0
-        .word  $FE0F, $007B, $46CA, $374E
-        .word  $FE0D, $0073, $4660, $37FB
-        .word  $FE0B, $006A, $45F4, $38A5
-        .word  $FE09, $0061, $4584, $394E
-        .word  $FE07, $0058, $4512, $39F5
-        .word  $FE06, $0050, $449C, $3A99
-        .word  $FE04, $0047, $4424, $3B3C
-        .word  $FE03, $003E, $43A9, $3BDC
-        .word  $FE02, $0035, $432B, $3C7A
-        .word  $FE01, $002C, $42AA, $3D16
-        .word  $FE01, $0023, $4227, $3DB0
-        .word  $FE00, $001A, $41A1, $3E48
-        .word  $FE00, $0011, $4118, $3EDD
-        .word  $FE00, $0008, $408D, $3F6F
-        .word  $FE00, $0000, $3FFF, $3FFF
-        .word  $FE00, $FFF7, $3F6F, $408D
-        .word  $FE00, $FFEE, $3EDD, $4118
-        .word  $FE00, $FFE5, $3E48, $41A1
-        .word  $FE01, $FFDC, $3DB0, $4227
-        .word  $FE01, $FFD3, $3D16, $42AA
-        .word  $FE02, $FFCA, $3C7A, $432B
-        .word  $FE03, $FFC1, $3BDC, $43A9
-        .word  $FE04, $FFB8, $3B3C, $4424
-        .word  $FE06, $FFAF, $3A99, $449C
-        .word  $FE07, $FFA7, $39F5, $4512
-        .word  $FE09, $FF9E, $394E, $4584
-        .word  $FE0B, $FF95, $38A5, $45F4
-        .word  $FE0D, $FF8C, $37FB, $4660
-        .word  $FE0F, $FF84, $374E, $46CA
-        .word  $FE11, $FF7B, $36A0, $4731
-        .word  $FE13, $FF72, $35F0, $4794
-        .word  $FE16, $FF6A, $353E, $47F5
-        .word  $FE19, $FF61, $348B, $4852
-        .word  $FE1B, $FF59, $33D6, $48AC
-        .word  $FE1E, $FF50, $3320, $4903
-        .word  $FE22, $FF48, $3268, $4957
-        .word  $FE25, $FF40, $31AE, $49A8
-        .word  $FE28, $FF37, $30F3, $49F5
-        .word  $FE2C, $FF2F, $3037, $4A3F
-        .word  $FE2F, $FF27, $2F7A, $4A86
-        .word  $FE33, $FF1F, $2EBB, $4ACA
-        .word  $FE37, $FF17, $2DFC, $4B0A
-        .word  $FE3B, $FF0F, $2D3B, $4B47
-        .word  $FE40, $FF07, $2C79, $4B80
-        .word  $FE44, $FF00, $2BB6, $4BB6
-        .word  $FE49, $FEF8, $2AF2, $4BE9
-        .word  $FE4D, $FEF0, $2A2E, $4C18
-        .word  $FE52, $FEE9, $2968, $4C44
-        .word  $FE57, $FEE1, $28A2, $4C6C
-        .word  $FE5C, $FEDA, $27DB, $4C91
-        .word  $FE61, $FED3, $2714, $4CB2
-        .word  $FE67, $FECB, $264C, $4CD0
-        .word  $FE6C, $FEC4, $2583, $4CEA
-        .word  $FE72, $FEBD, $24BA, $4D01
-        .word  $FE77, $FEB6, $23F1, $4D15
-        .word  $FE7D, $FEB0, $2328, $4D25
-        .word  $FE83, $FEA9, $225E, $4D31
-        .word  $FE89, $FEA2, $2194, $4D3A
-        .word  $FE8F, $FE9C, $20CA, $4D3F
-        .word  $FE95, $FE95, $2000, $4D41
-        .word  $FE9C, $FE8F, $1F35, $4D3F
-        .word  $FEA2, $FE89, $1E6B, $4D3A
-        .word  $FEA9, $FE83, $1DA1, $4D31
-        .word  $FEB0, $FE7D, $1CD7, $4D25
-        .word  $FEB6, $FE77, $1C0E, $4D15
-        .word  $FEBD, $FE72, $1B45, $4D01
-        .word  $FEC4, $FE6C, $1A7C, $4CEA
-        .word  $FECB, $FE67, $19B3, $4CD0
-        .word  $FED3, $FE61, $18EB, $4CB2
-        .word  $FEDA, $FE5C, $1824, $4C91
-        .word  $FEE1, $FE57, $175D, $4C6C
-        .word  $FEE9, $FE52, $1697, $4C44
-        .word  $FEF0, $FE4D, $15D1, $4C18
-        .word  $FEF8, $FE49, $150D, $4BE9
-        .word  $FF00, $FE44, $1449, $4BB6
-        .word  $FF07, $FE40, $1386, $4B80
-        .word  $FF0F, $FE3B, $12C4, $4B47
-        .word  $FF17, $FE37, $1203, $4B0A
-        .word  $FF1F, $FE33, $1144, $4ACA
-        .word  $FF27, $FE2F, $1085, $4A86
-        .word  $FF2F, $FE2C, $0FC8, $4A3F
-        .word  $FF37, $FE28, $0F0C, $49F5
-        .word  $FF40, $FE25, $0E51, $49A8
-        .word  $FF48, $FE22, $0D97, $4957
-        .word  $FF50, $FE1E, $0CDF, $4903
-        .word  $FF59, $FE1B, $0C29, $48AC
-        .word  $FF61, $FE19, $0B74, $4852
-        .word  $FF6A, $FE16, $0AC1, $47F5
-        .word  $FF72, $FE13, $0A0F, $4794
-        .word  $FF7B, $FE11, $095F, $4731
-        .word  $FF84, $FE0F, $08B1, $46CA
-        .word  $FF8C, $FE0D, $0804, $4660
-        .word  $FF95, $FE0B, $075A, $45F4
-        .word  $FF9E, $FE09, $06B1, $4584
-        .word  $FFA7, $FE07, $060A, $4512
-        .word  $FFAF, $FE06, $0566, $449C
-        .word  $FFB8, $FE04, $04C3, $4424
-        .word  $FFC1, $FE03, $0423, $43A9
-        .word  $FFCA, $FE02, $0385, $432B
-        .word  $FFD3, $FE01, $02E9, $42AA
-        .word  $FFDC, $FE01, $024F, $4227
-        .word  $FFE5, $FE00, $01B7, $41A1
-        .word  $FFEE, $FE00, $0122, $4118
-        .word  $FFF7, $FE00, $0090, $408D
-        .word  $0000, $FE00, $0000, $3FFF
-        .word  $0008, $FE00, $FF72, $3F6F
-        .word  $0011, $FE00, $FEE7, $3EDD
-        .word  $001A, $FE00, $FE5E, $3E48
-        .word  $0023, $FE01, $FDD8, $3DB0
-        .word  $002C, $FE01, $FD55, $3D16
-        .word  $0035, $FE02, $FCD4, $3C7A
-        .word  $003E, $FE03, $FC56, $3BDC
-        .word  $0047, $FE04, $FBDB, $3B3C
-        .word  $0050, $FE06, $FB63, $3A99
-        .word  $0058, $FE07, $FAED, $39F5
-        .word  $0061, $FE09, $FA7B, $394E
-        .word  $006A, $FE0B, $FA0B, $38A5
-        .word  $0073, $FE0D, $F99F, $37FB
-        .word  $007B, $FE0F, $F935, $374E
-        .word  $0084, $FE11, $F8CE, $36A0
-        .word  $008D, $FE13, $F86B, $35F0
-        .word  $0095, $FE16, $F80A, $353E
-        .word  $009E, $FE19, $F7AD, $348B
-        .word  $00A6, $FE1B, $F753, $33D6
-        .word  $00AF, $FE1E, $F6FC, $3320
-        .word  $00B7, $FE22, $F6A8, $3268
-        .word  $00BF, $FE25, $F657, $31AE
-        .word  $00C8, $FE28, $F60A, $30F3
-        .word  $00D0, $FE2C, $F5C0, $3037
-        .word  $00D8, $FE2F, $F579, $2F7A
-        .word  $00E0, $FE33, $F535, $2EBB
-        .word  $00E8, $FE37, $F4F5, $2DFC
-        .word  $00F0, $FE3B, $F4B8, $2D3B
-        .word  $00F8, $FE40, $F47F, $2C79
-        .word  $0100, $FE44, $F449, $2BB6
-        .word  $0107, $FE49, $F416, $2AF2
-        .word  $010F, $FE4D, $F3E7, $2A2E
-        .word  $0116, $FE52, $F3BB, $2968
-        .word  $011E, $FE57, $F393, $28A2
-        .word  $0125, $FE5C, $F36E, $27DB
-        .word  $012C, $FE61, $F34D, $2714
-        .word  $0134, $FE67, $F32F, $264C
-        .word  $013B, $FE6C, $F315, $2583
-        .word  $0142, $FE72, $F2FE, $24BA
-        .word  $0149, $FE77, $F2EA, $23F1
-        .word  $014F, $FE7D, $F2DA, $2328
-        .word  $0156, $FE83, $F2CE, $225E
-        .word  $015D, $FE89, $F2C5, $2194
-        .word  $0163, $FE8F, $F2C0, $20CA
-        .word  $016A, $FE95, $F2BE, $2000
-        .word  $0170, $FE9C, $F2C0, $1F35
-        .word  $0176, $FEA2, $F2C5, $1E6B
-        .word  $017C, $FEA9, $F2CE, $1DA1
-        .word  $0182, $FEB0, $F2DA, $1CD7
-        .word  $0188, $FEB6, $F2EA, $1C0E
-        .word  $018D, $FEBD, $F2FE, $1B45
-        .word  $0193, $FEC4, $F315, $1A7C
-        .word  $0198, $FECB, $F32F, $19B3
-        .word  $019E, $FED3, $F34D, $18EB
-        .word  $01A3, $FEDA, $F36E, $1824
-        .word  $01A8, $FEE1, $F393, $175D
-        .word  $01AD, $FEE9, $F3BB, $1697
-        .word  $01B2, $FEF0, $F3E7, $15D1
-        .word  $01B6, $FEF8, $F416, $150D
-        .word  $01BB, $FEFF, $F449, $1449
-        .word  $01BF, $FF07, $F47F, $1386
-        .word  $01C4, $FF0F, $F4B8, $12C4
-        .word  $01C8, $FF17, $F4F5, $1203
-        .word  $01CC, $FF1F, $F535, $1144
-        .word  $01D0, $FF27, $F579, $1085
-        .word  $01D3, $FF2F, $F5C0, $0FC8
-        .word  $01D7, $FF37, $F60A, $0F0C
-        .word  $01DA, $FF40, $F657, $0E51
-        .word  $01DD, $FF48, $F6A8, $0D97
-        .word  $01E1, $FF50, $F6FC, $0CDF
-        .word  $01E4, $FF59, $F753, $0C29
-        .word  $01E6, $FF61, $F7AD, $0B74
-        .word  $01E9, $FF6A, $F80A, $0AC1
-        .word  $01EC, $FF72, $F86B, $0A0F
-        .word  $01EE, $FF7B, $F8CE, $095F
-        .word  $01F0, $FF84, $F935, $08B1
-        .word  $01F2, $FF8C, $F99F, $0804
-        .word  $01F4, $FF95, $FA0B, $075A
-        .word  $01F6, $FF9E, $FA7B, $06B1
-        .word  $01F8, $FFA7, $FAED, $060A
-        .word  $01F9, $FFAF, $FB63, $0566
-        .word  $01FB, $FFB8, $FBDB, $04C3
-        .word  $01FC, $FFC1, $FC56, $0423
-        .word  $01FD, $FFCA, $FCD4, $0385
-        .word  $01FE, $FFD3, $FD55, $02E9
-        .word  $01FE, $FFDC, $FDD8, $024F
-        .word  $01FF, $FFE5, $FE5E, $01B7
-        .word  $01FF, $FFEE, $FEE7, $0122
-        .word  $01FF, $FFF7, $FF72, $0090
+        ; the word[0] is the SINE, get_cosine() gets the COSINE fron the SINE
+        ; thw word[1] is the 64_XPOS, get
+        ; TBL_SINE/COSINE   TBL_64_XPOS/YPOS
+        .word  $0000,  $0000,  $0000    ; 0
+        .word  $0009,  $008C,  $FF77    ; 1
+        .word  $0012,  $011A,  $FEEF    ; 2
+        .word  $001A,  $01AA,  $FE6C    ; 3
+        .word  $0024,  $023D,  $FDE9    ; 4
+        .word  $002C,  $02D1,  $FD6B    ; 5
+        .word  $0035,  $036A,  $FCEE    ; 6
+        .word  $003F,  $0403,  $FC74    ; 7
+        .word  $0048,  $049E,  $FBFC    ; 8
+        .word  $0050,  $053B,  $FB89    ; 9
+        .word  $0059,  $05DA,  $FB17    ; 10
+        .word  $0061,  $067C,  $FAA7    ; 11
+        .word  $006B,  $0720,  $FA3C    ; 12
+        .word  $0073,  $07C4,  $F9D3    ; 13
+        .word  $007C,  $086C,  $F96C    ; 14
+        .word  $0085,  $0914,  $F908    ; 15
+        .word  $008D,  $09BE,  $F8A8    ; 16
+        .word  $0096,  $0A6B,  $F84A    ; 17
+        .word  $009E,  $0B18,  $F7F1    ; 18
+        .word  $00A7,  $0BC8,  $F798    ; 19
+        .word  $00AF,  $0C79,  $F744    ; 20
+        .word  $00B7,  $0D2C,  $F6F4    ; 21
+        .word  $00C0,  $0DDF,  $F6A5    ; 22
+        .word  $00C8,  $0E93,  $F65A    ; 23
+        .word  $00D0,  $0F49,  $F613    ; 24
+        .word  $00D8,  $1002,  $F5CD    ; 25
+        .word  $00E0,  $10BB,  $F58C    ; 26
+        .word  $00E8,  $1174,  $F54F    ; 27
+        .word  $00F0,  $122E,  $F513    ; 28
+        .word  $00F8,  $12EB,  $F4DB    ; 29
+        .word  $0100,  $13A8,  $F4A8    ; 30
+        .word  $0108,  $1465,  $F477    ; 31
+        .word  $0110,  $1524,  $F448    ; 32
+        .word  $0116,  $15E3,  $F41F    ; 33
+        .word  $011E,  $16A2,  $F3F7    ; 34
+        .word  $0126,  $1764,  $F3D4    ; 35
+        .word  $012C,  $1824,  $F3B3    ; 36
+        .word  $0135,  $18E6,  $F396    ; 37
+        .word  $013C,  $19A9,  $F37C    ; 38
+        .word  $0142,  $1A6B,  $F366    ; 39
+        .word  $014A,  $1B2E,  $F353    ; 40
+        .word  $014F,  $1BF2,  $F344    ; 41
+        .word  $0156,  $1CB5,  $F339    ; 42
+        .word  $015D,  $1D79,  $F32F    ; 43
+        .word  $0163,  $1E3C,  $F32A    ; 44
+        .word  $016B,  $1F00,  $F329    ; 45
+        .word  $0171,  $1FC4,  $F32A    ; 46
+        .word  $0177,  $2088,  $F32F    ; 47
+        .word  $017D,  $214C,  $F339    ; 48
+        .word  $0183,  $220F,  $F344    ; 49
+        .word  $0188,  $22D3,  $F353    ; 50
+        .word  $018D,  $2396,  $F366    ; 51
+        .word  $0193,  $2457,  $F37C    ; 52
+        .word  $0198,  $251A,  $F396    ; 53
+        .word  $019F,  $25DC,  $F3B3    ; 54
+        .word  $01A4,  $269D,  $F3D4    ; 55
+        .word  $01A9,  $275E,  $F3F7    ; 56
+        .word  $01AD,  $281E,  $F41F    ; 57
+        .word  $01B3,  $28DD,  $F448    ; 58
+        .word  $01B6,  $299C,  $F477    ; 59
+        .word  $01BC,  $2A58,  $F4A8    ; 60
+        .word  $01BF,  $2B15,  $F4DB    ; 61
+        .word  $01C5,  $2BD1,  $F513    ; 62
+        .word  $01C8,  $2C8D,  $F54F    ; 63
+        .word  $01CC,  $2D46,  $F58C    ; 64
+        .word  $01D1,  $2DFE,  $F5CD    ; 65
+        .word  $01D3,  $2EB6,  $F613    ; 66
+        .word  $01D7,  $2F6C,  $F65A    ; 67
+        .word  $01DB,  $3021,  $F6A5    ; 68
+        .word  $01DD,  $30D5,  $F6F4    ; 69
+        .word  $01E2,  $3188,  $F744    ; 70
+        .word  $01E5,  $3238,  $F798    ; 71
+        .word  $01E6,  $32E8,  $F7F1    ; 72
+        .word  $01E9,  $3395,  $F84A    ; 73
+        .word  $01EC,  $3441,  $F8A8    ; 74
+        .word  $01EF,  $34EB,  $F908    ; 75
+        .word  $01F0,  $3595,  $F96C    ; 76
+        .word  $01F2,  $363C,  $F9D3    ; 77
+        .word  $01F5,  $36E0,  $FA3C    ; 78
+        .word  $01F7,  $3784,  $FAA7    ; 79
+        .word  $01F8,  $3825,  $FB17    ; 80
+        .word  $01F9,  $38C4,  $FB89    ; 81
+        .word  $01FB,  $3962,  $FBFC    ; 82
+        .word  $01FD,  $39FE,  $FC74    ; 83
+        .word  $01FE,  $3A97,  $FCEE    ; 84
+        .word  $01FF,  $3B2F,  $FD6B    ; 85
+        .word  $01FE,  $3BC3,  $FDE9    ; 86
+        .word  $01FF,  $3C55,  $FE6C    ; 87
+        .word  $01FF,  $3CE7,  $FEEF    ; 88
+        .word  $01FF,  $3D74,  $FF77    ; 89
+        .word  $0200,  $3E00,  $0000    ; 90
+        .word  $01FF,  $3E89,  $008C    ; 91
+        .word  $01FF,  $3F11,  $011A    ; 92
+        .word  $01FF,  $3F95,  $01AA    ; 93
+        .word  $01FE,  $4017,  $023D    ; 94
+        .word  $01FF,  $4096,  $02D1    ; 95
+        .word  $01FE,  $4112,  $036A    ; 96
+        .word  $01FD,  $418C,  $0403    ; 97
+        .word  $01FB,  $4203,  $049E    ; 98
+        .word  $01F9,  $4278,  $053B    ; 99
+        .word  $01F8,  $42E9,  $05DA    ; 100
+        .word  $01F7,  $4359,  $067C    ; 101
+        .word  $01F5,  $43C4,  $0720    ; 102
+        .word  $01F2,  $442E,  $07C4    ; 103
+        .word  $01F0,  $4494,  $086C    ; 104
+        .word  $01EF,  $44F7,  $0914    ; 105
+        .word  $01EC,  $4558,  $09BE    ; 106
+        .word  $01E9,  $45B6,  $0A6B    ; 107
+        .word  $01E6,  $4610,  $0B18    ; 108
+        .word  $01E5,  $4668,  $0BC8    ; 109
+        .word  $01E2,  $46BB,  $0C79    ; 110
+        .word  $01DD,  $470D,  $0D2C    ; 111
+        .word  $01DB,  $475B,  $0DDF    ; 112
+        .word  $01D7,  $47A6,  $0E93    ; 113
+        .word  $01D3,  $47EE,  $0F49    ; 114
+        .word  $01D1,  $4833,  $1002    ; 115
+        .word  $01CC,  $4873,  $10BB    ; 116
+        .word  $01C8,  $48B2,  $1174    ; 117
+        .word  $01C5,  $48ED,  $122E    ; 118
+        .word  $01BF,  $4925,  $12EB    ; 119
+        .word  $01BC,  $4959,  $13A8    ; 120
+        .word  $01B6,  $498A,  $1465    ; 121
+        .word  $01B3,  $49B7,  $1524    ; 122
+        .word  $01AD,  $49E2,  $15E3    ; 123
+        .word  $01A9,  $4A09,  $16A2    ; 124
+        .word  $01A4,  $4A2C,  $1764    ; 125
+        .word  $019F,  $4A4D,  $1824    ; 126
+        .word  $0198,  $4A6A,  $18E6    ; 127
+        .word  $0193,  $4A83,  $19A9    ; 128
+        .word  $018D,  $4A99,  $1A6B    ; 129
+        .word  $0188,  $4AAD,  $1B2E    ; 130
+        .word  $0183,  $4ABC,  $1BF2    ; 131
+        .word  $017D,  $4AC8,  $1CB5    ; 132
+        .word  $0177,  $4AD1,  $1D79    ; 133
+        .word  $0171,  $4AD6,  $1E3C    ; 134
+        .word  $016B,  $4AD7,  $1F00    ; 135
+        .word  $0163,  $4AD6,  $1FC4    ; 136
+        .word  $015D,  $4AD1,  $2088    ; 137
+        .word  $0156,  $4AC8,  $214C    ; 138
+        .word  $014F,  $4ABC,  $220F    ; 139
+        .word  $014A,  $4AAD,  $22D3    ; 140
+        .word  $0142,  $4A99,  $2396    ; 141
+        .word  $013C,  $4A83,  $2457    ; 142
+        .word  $0135,  $4A6A,  $251A    ; 143
+        .word  $012C,  $4A4D,  $25DC    ; 144
+        .word  $0126,  $4A2C,  $269D    ; 145
+        .word  $011E,  $4A09,  $275E    ; 146
+        .word  $0116,  $49E2,  $281E    ; 147
+        .word  $0110,  $49B7,  $28DD    ; 148
+        .word  $0108,  $498A,  $299C    ; 149
+        .word  $0100,  $4959,  $2A58    ; 150
+        .word  $00F8,  $4925,  $2B15    ; 151
+        .word  $00F0,  $48ED,  $2BD1    ; 152
+        .word  $00E8,  $48B2,  $2C8D    ; 153
+        .word  $00E0,  $4873,  $2D46    ; 154
+        .word  $00D8,  $4833,  $2DFE    ; 155
+        .word  $00D0,  $47EE,  $2EB6    ; 156
+        .word  $00C8,  $47A6,  $2F6C    ; 157
+        .word  $00C0,  $475B,  $3021    ; 158
+        .word  $00B7,  $470D,  $30D5    ; 159
+        .word  $00AF,  $46BB,  $3188    ; 160
+        .word  $00A7,  $4668,  $3238    ; 161
+        .word  $009E,  $4610,  $32E8    ; 162
+        .word  $0096,  $45B6,  $3395    ; 163
+        .word  $008D,  $4558,  $3441    ; 164
+        .word  $0085,  $44F7,  $34EB    ; 165
+        .word  $007C,  $4494,  $3595    ; 166
+        .word  $0073,  $442E,  $363C    ; 167
+        .word  $006B,  $43C4,  $36E0    ; 168
+        .word  $0061,  $4359,  $3784    ; 169
+        .word  $0059,  $42E9,  $3825    ; 170
+        .word  $0050,  $4278,  $38C4    ; 171
+        .word  $0048,  $4203,  $3962    ; 172
+        .word  $003F,  $418C,  $39FE    ; 173
+        .word  $0035,  $4112,  $3A97    ; 174
+        .word  $002C,  $4096,  $3B2F    ; 175
+        .word  $0024,  $4017,  $3BC3    ; 176
+        .word  $001A,  $3F95,  $3C55    ; 177
+        .word  $0012,  $3F11,  $3CE7    ; 178
+        .word  $0009,  $3E89,  $3D74    ; 179
+        .word  $0000,  $3E00,  $3E00    ; 180
+        .word  $FFF7,  $3D74,  $3E89    ; 181
+        .word  $FFEE,  $3CE7,  $3F11    ; 182
+        .word  $FFE6,  $3C55,  $3F95    ; 183
+        .word  $FFDC,  $3BC3,  $4017    ; 184
+        .word  $FFD4,  $3B2F,  $4096    ; 185
+        .word  $FFCB,  $3A97,  $4112    ; 186
+        .word  $FFC1,  $39FE,  $418C    ; 187
+        .word  $FFB8,  $3962,  $4203    ; 188
+        .word  $FFB0,  $38C4,  $4278    ; 189
+        .word  $FFA7,  $3825,  $42E9    ; 190
+        .word  $FF9F,  $3784,  $4359    ; 191
+        .word  $FF95,  $36E0,  $43C4    ; 192
+        .word  $FF8D,  $363C,  $442E    ; 193
+        .word  $FF84,  $3595,  $4494    ; 194
+        .word  $FF7B,  $34EB,  $44F7    ; 195
+        .word  $FF73,  $3441,  $4558    ; 196
+        .word  $FF6A,  $3395,  $45B6    ; 197
+        .word  $FF62,  $32E8,  $4610    ; 198
+        .word  $FF59,  $3238,  $4668    ; 199
+        .word  $FF51,  $3188,  $46BB    ; 200
+        .word  $FF49,  $30D5,  $470D    ; 201
+        .word  $FF40,  $3021,  $475B    ; 202
+        .word  $FF38,  $2F6C,  $47A6    ; 203
+        .word  $FF30,  $2EB6,  $47EE    ; 204
+        .word  $FF28,  $2DFE,  $4833    ; 205
+        .word  $FF20,  $2D46,  $4873    ; 206
+        .word  $FF18,  $2C8D,  $48B2    ; 207
+        .word  $FF10,  $2BD1,  $48ED    ; 208
+        .word  $FF08,  $2B15,  $4925    ; 209
+        .word  $FF00,  $2A58,  $4959    ; 210
+        .word  $FEF8,  $299C,  $498A    ; 211
+        .word  $FEF0,  $28DD,  $49B7    ; 212
+        .word  $FEEA,  $281E,  $49E2    ; 213
+        .word  $FEE2,  $275E,  $4A09    ; 214
+        .word  $FEDA,  $269D,  $4A2C    ; 215
+        .word  $FED4,  $25DC,  $4A4D    ; 216
+        .word  $FECB,  $251A,  $4A6A    ; 217
+        .word  $FEC4,  $2457,  $4A83    ; 218
+        .word  $FEBE,  $2396,  $4A99    ; 219
+        .word  $FEB6,  $22D3,  $4AAD    ; 220
+        .word  $FEB1,  $220F,  $4ABC    ; 221
+        .word  $FEAA,  $214C,  $4AC8    ; 222
+        .word  $FEA3,  $2088,  $4AD1    ; 223
+        .word  $FE9D,  $1FC4,  $4AD6    ; 224
+        .word  $FE95,  $1F00,  $4AD7    ; 225
+        .word  $FE8F,  $1E3C,  $4AD6    ; 226
+        .word  $FE89,  $1D79,  $4AD1    ; 227
+        .word  $FE83,  $1CB5,  $4AC8    ; 228
+        .word  $FE7D,  $1BF2,  $4ABC    ; 229
+        .word  $FE78,  $1B2E,  $4AAD    ; 230
+        .word  $FE73,  $1A6B,  $4A99    ; 231
+        .word  $FE6D,  $19A9,  $4A83    ; 232
+        .word  $FE68,  $18E6,  $4A6A    ; 233
+        .word  $FE61,  $1824,  $4A4D    ; 234
+        .word  $FE5C,  $1764,  $4A2C    ; 235
+        .word  $FE57,  $16A2,  $4A09    ; 236
+        .word  $FE53,  $15E3,  $49E2    ; 237
+        .word  $FE4D,  $1524,  $49B7    ; 238
+        .word  $FE4A,  $1465,  $498A    ; 239
+        .word  $FE44,  $13A8,  $4959    ; 240
+        .word  $FE41,  $12EB,  $4925    ; 241
+        .word  $FE3B,  $122E,  $48ED    ; 242
+        .word  $FE38,  $1174,  $48B2    ; 243
+        .word  $FE34,  $10BB,  $4873    ; 244
+        .word  $FE2F,  $1002,  $4833    ; 245
+        .word  $FE2D,  $0F49,  $47EE    ; 246
+        .word  $FE29,  $0E93,  $47A6    ; 247
+        .word  $FE25,  $0DDF,  $475B    ; 248
+        .word  $FE23,  $0D2C,  $470D    ; 249
+        .word  $FE1E,  $0C79,  $46BB    ; 250
+        .word  $FE1B,  $0BC8,  $4668    ; 251
+        .word  $FE1A,  $0B18,  $4610    ; 252
+        .word  $FE17,  $0A6B,  $45B6    ; 253
+        .word  $FE14,  $09BE,  $4558    ; 254
+        .word  $FE11,  $0914,  $44F7    ; 255
+        .word  $FE10,  $086C,  $4494    ; 256
+        .word  $FE0E,  $07C4,  $442E    ; 257
+        .word  $FE0B,  $0720,  $43C4    ; 258
+        .word  $FE09,  $067C,  $4359    ; 259
+        .word  $FE08,  $05DA,  $42E9    ; 260
+        .word  $FE07,  $053B,  $4278    ; 261
+        .word  $FE05,  $049E,  $4203    ; 262
+        .word  $FE03,  $0403,  $418C    ; 263
+        .word  $FE02,  $036A,  $4112    ; 264
+        .word  $FE01,  $02D1,  $4096    ; 265
+        .word  $FE02,  $023D,  $4017    ; 266
+        .word  $FE01,  $01AA,  $3F95    ; 267
+        .word  $FE01,  $011A,  $3F11    ; 268
+        .word  $FE01,  $008C,  $3E89    ; 269
+        .word  $FE00,  $0000,  $3E00    ; 270
+        .word  $FE01,  $FF77,  $3D74    ; 271
+        .word  $FE01,  $FEEF,  $3CE7    ; 272
+        .word  $FE01,  $FE6C,  $3C55    ; 273
+        .word  $FE02,  $FDE9,  $3BC3    ; 274
+        .word  $FE01,  $FD6B,  $3B2F    ; 275
+        .word  $FE02,  $FCEE,  $3A97    ; 276
+        .word  $FE03,  $FC74,  $39FE    ; 277
+        .word  $FE05,  $FBFC,  $3962    ; 278
+        .word  $FE07,  $FB89,  $38C4    ; 279
+        .word  $FE08,  $FB17,  $3825    ; 280
+        .word  $FE09,  $FAA7,  $3784    ; 281
+        .word  $FE0B,  $FA3C,  $36E0    ; 282
+        .word  $FE0E,  $F9D3,  $363C    ; 283
+        .word  $FE10,  $F96C,  $3595    ; 284
+        .word  $FE11,  $F908,  $34EB    ; 285
+        .word  $FE14,  $F8A8,  $3441    ; 286
+        .word  $FE17,  $F84A,  $3395    ; 287
+        .word  $FE1A,  $F7F1,  $32E8    ; 288
+        .word  $FE1B,  $F798,  $3238    ; 289
+        .word  $FE1E,  $F744,  $3188    ; 290
+        .word  $FE23,  $F6F4,  $30D5    ; 291
+        .word  $FE25,  $F6A5,  $3021    ; 292
+        .word  $FE29,  $F65A,  $2F6C    ; 293
+        .word  $FE2D,  $F613,  $2EB6    ; 294
+        .word  $FE2F,  $F5CD,  $2DFE    ; 295
+        .word  $FE34,  $F58C,  $2D46    ; 296
+        .word  $FE38,  $F54F,  $2C8D    ; 297
+        .word  $FE3B,  $F513,  $2BD1    ; 298
+        .word  $FE41,  $F4DB,  $2B15    ; 299
+        .word  $FE44,  $F4A8,  $2A58    ; 300
+        .word  $FE4A,  $F477,  $299C    ; 301
+        .word  $FE4D,  $F448,  $28DD    ; 302
+        .word  $FE53,  $F41F,  $281E    ; 303
+        .word  $FE57,  $F3F7,  $275E    ; 304
+        .word  $FE5C,  $F3D4,  $269D    ; 305
+        .word  $FE61,  $F3B3,  $25DC    ; 306
+        .word  $FE68,  $F396,  $251A    ; 307
+        .word  $FE6D,  $F37C,  $2457    ; 308
+        .word  $FE73,  $F366,  $2396    ; 309
+        .word  $FE78,  $F353,  $22D3    ; 310
+        .word  $FE7D,  $F344,  $220F    ; 311
+        .word  $FE83,  $F339,  $214C    ; 312
+        .word  $FE89,  $F32F,  $2088    ; 313
+        .word  $FE8F,  $F32A,  $1FC4    ; 314
+        .word  $FE95,  $F329,  $1F00    ; 315
+        .word  $FE9D,  $F32A,  $1E3C    ; 316
+        .word  $FEA3,  $F32F,  $1D79    ; 317
+        .word  $FEAA,  $F339,  $1CB5    ; 318
+        .word  $FEB1,  $F344,  $1BF2    ; 319
+        .word  $FEB6,  $F353,  $1B2E    ; 320
+        .word  $FEBE,  $F366,  $1A6B    ; 321
+        .word  $FEC4,  $F37C,  $19A9    ; 322
+        .word  $FECB,  $F396,  $18E6    ; 323
+        .word  $FED4,  $F3B3,  $1824    ; 324
+        .word  $FEDA,  $F3D4,  $1764    ; 325
+        .word  $FEE2,  $F3F7,  $16A2    ; 326
+        .word  $FEEA,  $F41F,  $15E3    ; 327
+        .word  $FEF0,  $F448,  $1524    ; 328
+        .word  $FEF8,  $F477,  $1465    ; 329
+        .word  $FF00,  $F4A8,  $13A8    ; 330
+        .word  $FF08,  $F4DB,  $12EB    ; 331
+        .word  $FF10,  $F513,  $122E    ; 332
+        .word  $FF18,  $F54F,  $1174    ; 333
+        .word  $FF20,  $F58C,  $10BB    ; 334
+        .word  $FF28,  $F5CD,  $1002    ; 335
+        .word  $FF30,  $F613,  $0F49    ; 336
+        .word  $FF38,  $F65A,  $0E93    ; 337
+        .word  $FF40,  $F6A5,  $0DDF    ; 338
+        .word  $FF49,  $F6F4,  $0D2C    ; 339
+        .word  $FF51,  $F744,  $0C79    ; 340
+        .word  $FF59,  $F798,  $0BC8    ; 341
+        .word  $FF62,  $F7F1,  $0B18    ; 342
+        .word  $FF6A,  $F84A,  $0A6B    ; 343
+        .word  $FF73,  $F8A8,  $09BE    ; 344
+        .word  $FF7B,  $F908,  $0914    ; 345
+        .word  $FF84,  $F96C,  $086C    ; 346
+        .word  $FF8D,  $F9D3,  $07C4    ; 347
+        .word  $FF95,  $FA3C,  $0720    ; 348
+        .word  $FF9F,  $FAA7,  $067C    ; 349
+        .word  $FFA7,  $FB17,  $05DA    ; 350
+        .word  $FFB0,  $FB89,  $053B    ; 351
+        .word  $FFB8,  $FBFC,  $049E    ; 352
+        .word  $FFC1,  $FC74,  $0403    ; 353
+        .word  $FFCB,  $FCEE,  $036A    ; 354
+        .word  $FFD4,  $FD6B,  $02D1    ; 355
+        .word  $FFDC,  $FDE9,  $023D    ; 356
+        .word  $FFE6,  $FE6C,  $01AA    ; 357
+        .word  $FFEE,  $FEEF,  $011A    ; 358
+        .word  $FFF7,  $FF77,  $008C    ; 359
     }}
-
-
-
+/*
     %asm{{
     next_code_addr: = *
         * = $BFD0
@@ -1056,8 +1229,10 @@ vtsbank {
         jmp p8b_vtsbank.p8s_affine.p8s_shear_v  
         jmp p8b_vtsbank.p8s_affine.p8s_shear_h  
         jmp p8b_vtsbank.p8s_affine.p8s_reset_fx
+        jmp p8b_vtsbank.p8s_affine.p8s_sprite_to_tile_set
         * = next_code_addr    
     }}
+*/
 }
 
 
