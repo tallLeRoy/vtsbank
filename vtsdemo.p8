@@ -8,7 +8,6 @@
 %import vtsimport    ; for rotate and scale and shear of VERA tile sets
 %import gfx_hires
 %import sprites
-%import macro816
 
 %encoding iso
 %zeropage basicsafe
@@ -40,14 +39,6 @@ main {
     bool  pad_tile_set
 
     sub start() {
-        ; execute in 816 native mode
-        macro816.macros()
-        %asm{{
-            native_mode
-        }} ; from macro816.p8
-        defer %asm{{
-            emulation_mode
-        }}
 
         cbm.CINT()
         txt.clear_screen()
