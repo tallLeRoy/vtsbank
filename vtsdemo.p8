@@ -8,6 +8,7 @@
 %import vtsimport    ; for rotate and scale and shear of VERA tile sets
 %import gfx_hires
 %import sprites
+%import macro816
 
 %encoding iso
 %zeropage basicsafe
@@ -39,6 +40,15 @@ main {
     bool  pad_tile_set
 
     sub start() {
+        ; execute in 816 native mode
+        macro816.macros()
+        %asm{{
+            native_mode
+        }} ; from macro816.p8
+        defer %asm{{
+            emulation_mode
+        }}
+
         cbm.CINT()
         txt.clear_screen()
         txt.iso()
@@ -133,6 +143,8 @@ main {
             repeat 3 txt.nl()
             txt.print("  9 - Rotate a dozen figures at once ")
             repeat 3 txt.nl()
+            txt.print("  C - Convert Sprite to Tile Set ")
+            repeat 3 txt.nl()
             txt.print("  F - The tale of the frog and the fly ")
             repeat 3 txt.nl()
             txt.print("  G - Ghosting")
@@ -143,7 +155,7 @@ main {
             ubyte key = txt.waitkey() - $30
             txt.print_ub(key)
             when key {
-                1,2,3,4,5,6,7,8,9,22,23,54,55 -> {
+                1,2,3,4,5,6,7,8,9,19,22,23,51,54,55 -> {
                             figure = key
                         } 
                 else -> {
@@ -237,7 +249,14 @@ main {
                         dozen.all_at_once()      ; 64x64 + 16x16
                         void txt.waitkey()
                         continue
-                    }                    
+                    }   
+                    19,51 -> {    ; c or C 
+                        txt.cls()
+                        conversions.user_sprite() 
+                        void txt.waitkey()
+                        txt.cls()
+                        continue
+                    }                 
                     22,54 -> {     ; f or F
                         txt.cls()
                         frogfly.frog_n_fly()
@@ -312,12 +331,7 @@ main {
                 sprites.pos(1, 320,240)                       
     
                 txt.cls()
-;                void txt.waitkey()
-;                verafx.clear(TILE_VRAM_BANK, TILE_VRAM_ADDR, $00, TILE_VRAM_SIZE / 4)    
-;                vts.reverse()
-;                vts.rotate_f(0)
-;                void txt.waitkey()                
-    
+
                 ; perform some transforms
                 show_capabilities()
 
@@ -958,7 +972,10 @@ dozen {
                             SPRITE_VRAM_BANK12, SPRITE_VRAM_ADDR12,
                             16, false, TILE_VRAM_OFFSET12)
 
-        void main.check_ccrc(12, ccrc)                                                                   
+        void main.check_ccrc(12, ccrc)     
+
+        txt.plot(6,52)
+        txt.print(" Press any key to continue ")                                                              
 
         ; transform the tile set into the sprite, full size, no rotation or shear
         word degree = 0
@@ -991,6 +1008,8 @@ dozen {
         ; time the following 2,164 rotations
 
         void txt.waitkey()
+
+        txt.cls()
 
         ; rotate all four
         repeat 270 {
@@ -1032,6 +1051,14 @@ dozen {
             degree -= 8
             degree2 = degree * -1
         }
+
+        txt.plot(6,52)
+        txt.print(" Press any key to return to the menu ")                                                              
+
+        txt.waitkey()
+        txt.cls()
+        cx16.kbdbuf_put(' ')
+
     }
 
 }
@@ -1115,7 +1142,6 @@ frogfly {
         void diskio.f_read(&pathentries, 2)
 
         ; load the tile sets
-;        void diskio.vload_raw("resource/kermit.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
         void diskio.vload_raw("resource/kermit-open.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)        ; $1000 long 
         void diskio.vload_raw("resource/t7.bin-vts", TILE_VRAM_BANK2, TILE_VRAM_ADDR2)             ; $0100 long 
         void diskio.vload_raw("resource/t7-in.bin-vts", TILE_VRAM_BANK3, TILE_VRAM_ADDR3)          ; $0100 long 
@@ -1307,71 +1333,89 @@ frogfly {
 }
 
 ghosting {
-    const ubyte SPRITE_VRAM_BANK1          = $01                ; ghost
-    const uword SPRITE_VRAM_ADDR1          = $3000  
-    const uword SPRITE_VRAM_SIZE1          = 64 * 64
-
-    const ubyte TILE_VRAM_BANK1            = SPRITE_VRAM_BANK1      ; upright ghost
-    const uword TILE_VRAM_ADDR1            = SPRITE_VRAM_ADDR1 + SPRITE_VRAM_SIZE1  
-    const uword TILE_VRAM_SIZE1            = 64 * 64
+    ; tile sets
+    const ubyte TILE_VRAM_BANK1            = $01             ; upright ghost
+    const uword TILE_VRAM_ADDR1            = $3000  
+    const uword TILE_VRAM_SIZE1            = 32 * 64 
     const uword TILE_VRAM_OFFSET1          = 0
 
-    const ubyte TILE_VRAM_BANK2            = TILE_VRAM_BANK1        ; sheared ghost
+    const ubyte TILE_VRAM_BANK2            = TILE_VRAM_BANK1  ; sheared ghost
     const uword TILE_VRAM_ADDR2            = TILE_VRAM_ADDR1 + TILE_VRAM_SIZE1
-    const uword TILE_VRAM_SIZE2            = 64 * 64 
-    const uword TILE_VRAM_OFFSET2          = 0
+    const uword TILE_VRAM_SIZE2            = 32 * 64
+    const uword TILE_VRAM_OFFSET2          = TILE_VRAM_ADDR2 - TILE_VRAM_ADDR1
 
-    alias sprite_size = sprites.SIZE_64
+    ; sprite
+    const ubyte SPRITE_VRAM_BANK1          = TILE_VRAM_BANK2   ; upright/sheared ghost
+    const uword SPRITE_VRAM_ADDR1          = TILE_VRAM_ADDR2 + TILE_VRAM_SIZE2
+    const uword SPRITE_VRAM_SIZE1          = 64 * 64
+
     alias colors256 = sprites.COLORS_256
+    alias colors16 = sprites.COLORS_16
 
     ubyte[vts.VTS_CONTEXT_SIZE] context1    ; upright ghost
     ubyte[vts.VTS_CONTEXT_SIZE] context2    ; sheared ghost
 
     ubyte ccrc = 0
 
+    bool is4bit
+
     sub ghost() {
 
         ; clear the sprite buffers
-        verafx.clear(SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1, $00, $1000) ; clear r buffers
+        verafx.clear(TILE_VRAM_BANK1, TILE_VRAM_ADDR1, $00, $1000) ; clear our buffers
 
         ; load the tile sets
-        void diskio.vload_raw("resource/lghost8.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)   
+        void diskio.vload_raw("resource/lghost.bin-0vts", TILE_VRAM_BANK1, TILE_VRAM_ADDR1)   
 
+        is4bit = true
+    
         ; set up the sprite
-        sprites.init(1,  ; foreground kermit 256
-                     SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
-                     sprite_size, sprite_size,
-                     colors256, 0)
+        sprites.init(1,  ; upright/sheared ghost
+                    SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                    sprites.SIZE_64, sprites.SIZE_64,
+                    if is4bit colors16 else colors256, 0)
 
         ; create a context for each tile set          
         ccrc = vts.create_context( context1, ; upright ghost
                             TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
                             SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
-                            64, false, TILE_VRAM_OFFSET1)      
+                            64, is4bit, TILE_VRAM_OFFSET1)      
 
         void main.check_ccrc(1, ccrc)                                                                   
 
         ccrc = vts.create_context( context2, ; sheared ghost
-                            TILE_VRAM_BANK2, TILE_VRAM_ADDR2,
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
                             SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
-                            64, false, TILE_VRAM_OFFSET2)      
+                            64, is4bit, TILE_VRAM_OFFSET2)      
 
         void main.check_ccrc(2, ccrc)                                                                   
 
-        word xpos = 320
+        word xpos = 220
         word ypos = 240
         word angle = 0
 
-        ; show the ghost
+        ; show the upright ghost tile set
         vts.select(context1)
         vts.rotate(angle)
 
         sprites.pos(1, xpos, ypos)    ; ghost
 
-        vts.shear_h(120)
+        txt.plot(6,52)
+        txt.print(" Press any key to continue ")                                                              
+        void txt.waitkey()  
+        
+        txt.cls()
 
+        vts.shear_h(120)    ; give the ghost sprite a horizontal shear transform
+
+        ; make a new tile set from the sheared ghost 
         vts.select(context2)
-        vts.sprite_to_tile_set()
+        vts.sprite_to_tile_set(TILE_VRAM_SIZE2)
+
+        ; show the new sheared ghost tile set
+        vts.rotate(angle)
+
+        sprites.pos(1, xpos, ypos)    ; ghost 
 
         const ubyte steps = 200
         repeat steps {
@@ -1384,7 +1428,6 @@ ghosting {
             vts.rotate(angle)
             delay()
         }
-;        vts.rotate(-90)
         repeat steps {
             sprites.sety(1,ypos)
             ypos--
@@ -1426,6 +1469,14 @@ ghosting {
         vts.select(context1)
         vts.rotate(angle)
 
+        txt.plot(6,52)
+        txt.print(" Press any key to return to the menu ")                                                              
+
+        txt.waitkey()
+        txt.cls()
+        cx16.kbdbuf_put(' ')
+
+
     }
 
     sub delay() {
@@ -1437,4 +1488,662 @@ ghosting {
     }
 }
 
+conversions {
+    ; tile sets
+    ; $3000
+    const ubyte TILE_VRAM_BANK1            = $01             ; tile set 64
+    const uword TILE_VRAM_ADDR1            = $3000  
+    const uword TILE_VRAM_SIZE1            = 64 * 64 
+    const uword TILE_VRAM_OFFSET1          = 0
 
+    ; $4000
+    const ubyte TILE_VRAM_BANK2            = TILE_VRAM_BANK1  ; tile set 16
+    const uword TILE_VRAM_ADDR2            = TILE_VRAM_ADDR1 + TILE_VRAM_SIZE1
+    const uword TILE_VRAM_SIZE2            = 16 * 16
+    const uword TILE_VRAM_OFFSET2          = TILE_VRAM_ADDR2 - TILE_VRAM_ADDR1
+
+    ; sprites
+    ; $4100
+    const ubyte SPRITE_VRAM_BANK1          = TILE_VRAM_BANK2   ; sprite 64
+    const uword SPRITE_VRAM_ADDR1          = TILE_VRAM_ADDR2 + TILE_VRAM_SIZE2
+    const uword SPRITE_VRAM_SIZE1          = 64 * 64
+
+    ; $5100
+    const ubyte SPRITE_VRAM_BANK2          = SPRITE_VRAM_BANK1  ; sprite 16
+    const uword SPRITE_VRAM_ADDR2          = SPRITE_VRAM_ADDR1 + SPRITE_VRAM_SIZE1
+    const uword SPRITE_VRAM_SIZE2          = 16 * 16
+
+    ; $5200
+    const ubyte SPRITE_VRAM_BANK3          = SPRITE_VRAM_BANK2  ; grid 64
+    const uword SPRITE_VRAM_ADDR3          = SPRITE_VRAM_ADDR2 + SPRITE_VRAM_SIZE2
+    const uword SPRITE_VRAM_SIZE3          = 64 * 64
+
+    ; $6200
+    const ubyte SPRITE_VRAM_BANK4          = SPRITE_VRAM_BANK3  ; grid 16
+    const uword SPRITE_VRAM_ADDR4          = SPRITE_VRAM_ADDR3 + SPRITE_VRAM_SIZE3
+    const uword SPRITE_VRAM_SIZE4          = 16 * 16
+
+    ; $6300
+    const ubyte SPRITE_VRAM_BANK5          = SPRITE_VRAM_BANK4  ; original sprite
+    const uword SPRITE_VRAM_ADDR5          = SPRITE_VRAM_ADDR4 + SPRITE_VRAM_SIZE4
+    const uword SPRITE_VRAM_SIZE5          = 64 * 64            ; for largest original
+
+    const ubyte SPRITE_64                  = 1
+    const ubyte SPRITE_16                  = 2
+    const ubyte SPRITE_GRID_64             = 3
+    const ubyte SPRITE_GRID_16             = 4
+    const ubyte SPRITE_ORIGINAL            = 5
+
+    const word POS_ORIGINAL_X              = 100
+    const word POS_ORIGINAL_Y              = 200
+    const word POS_64_X                    = 180
+    const word POS_64_Y                    = 170
+    const word POS_16_X                    = 260   
+    const word POS_16_Y                    = 196 
+
+    ubyte[vts.VTS_CONTEXT_SIZE] context1    ; upright ghost
+    ubyte[vts.VTS_CONTEXT_SIZE] context2    ; sheared ghost
+
+    ubyte[81] spritefilename
+    ubyte[81] defaultspritefilename
+    ubyte[81] tsfilename
+
+    ubyte sprite_width
+    ubyte sprite_height
+    ubyte sprite_bit_depth
+    bool is4bit = false
+    ubyte key
+    bool has2x2 = false
+
+    sub user_sprite() {
+        linespace()
+        txt.print(" How wide is the sprite?")
+                linespace()
+        txt.print(" 1. 8 pixels wide")
+        linespace()
+        txt.print(" 2. 16 pixels wide")
+        linespace()
+        txt.print(" 3. 32 pixels wide")
+        linespace()
+        txt.print(" 4. 64 pixels wide")
+        linespace()
+        txt.print(" ESC to exit")
+        linespace()
+        txt.print(" Select the sprite width  ")
+        ubyte group 
+        ubyte item
+        do {
+            key = txt.waitkey()
+            if key == $1B {
+                cx16.kbdbuf_put(' ')
+                return ; ESC key
+            }
+            if key in "1234" {
+                group = key
+            } else {
+                txt.bell()
+                group = 0
+            }
+        } until group != 0
+
+        txt.cls()
+        spritefilename[0] = 0
+        defaultspritefilename[0] = 0
+        when group {
+            '1' -> {
+                strings.append(defaultspritefilename, "resource/sp8x")
+                linespace()
+                txt.print(" Sprites that are 8 pixels wide")
+                linespace()
+                txt.print(" 1. 8x8   16 color")
+                linespace()
+                txt.print(" 2. 8x8  256 color")
+                linespace()
+                txt.print(" 3. 8x16  16 color")
+                linespace()
+                txt.print(" 4. 8x16 256 color")
+                linespace()
+                txt.print(" 5. 8x32  16 color")
+                linespace()
+                txt.print(" 6. 8x32 256 color")
+                linespace()
+                txt.print(" 7. 8x64  16 color")
+                linespace()
+                txt.print(" 8. 8x64 256 color")
+                linespace()
+                txt.print(" ESC to exit")
+                linespace()
+                txt.print(" Select the sprite size and colors  ")
+                do {
+                    key = txt.waitkey()
+                    if key == $1B {
+                        cx16.kbdbuf_put(' ')
+                        return ; ESC key
+                    }
+                    if key in "12345678" {
+                        item = key
+                    } else {
+                        txt.bell()
+                        item = 0
+                    }
+                } until item != 0
+
+                sprite_width = sprites.SIZE_8
+                sprite_bit_depth = sprites.COLORS_256
+                is4bit = false
+                if item & $01 == $01 {
+                    is4bit = true
+                    sprite_bit_depth = sprites.COLORS_16
+                }                
+                when item {
+                    '1','2' -> {
+                        sprite_height = sprites.SIZE_8
+                    }
+                    '3','4' -> {
+                        sprite_height = sprites.SIZE_16
+                    }
+                    '5','6' -> {
+                        sprite_height = sprites.SIZE_32
+                    }
+                    '7','8' -> {
+                        sprite_height = sprites.SIZE_64
+                    }
+                }    
+            }
+            '2' -> {
+                strings.append(defaultspritefilename, "resource/sp16x")
+                linespace()
+                txt.print(" Sprites that are 16 pixels wide")
+                linespace()
+                txt.print(" 1. 16x8   16 color")
+                linespace()
+                txt.print(" 2. 16x8  256 color")
+                linespace()
+                txt.print(" 3. 16x16  16 color")
+                linespace()
+                txt.print(" 4. 16x16 256 color")
+                linespace()
+                txt.print(" 5. 16x32  16 color")
+                linespace()
+                txt.print(" 6. 16x32 256 color")
+                linespace()
+                txt.print(" 7. 16x64  16 color")
+                linespace()
+                txt.print(" 8. 16x64 256 color")
+                linespace()
+                txt.print(" ESC to exit")
+                linespace()
+                txt.print(" Select the sprite size and colors  ")
+                do {
+                    key = txt.waitkey()
+                    if key == $1B {
+                        cx16.kbdbuf_put(' ')
+                        return ; ESC key
+                    }
+                    if key in "12345678" {
+                        item = key
+                    } else {
+                        txt.bell()
+                        item = 0
+                    }
+                } until item != 0
+
+                sprite_width = sprites.SIZE_16
+                sprite_bit_depth = sprites.COLORS_256
+                is4bit = false
+                if item & $01 == $01 {
+                    is4bit = true
+                    sprite_bit_depth = sprites.COLORS_16
+                }                
+                when item {
+                    '1','2' -> {
+                        sprite_height = sprites.SIZE_8
+                    }
+                    '3','4' -> {
+                        sprite_height = sprites.SIZE_16
+                    }
+                    '5','6' -> {
+                        sprite_height = sprites.SIZE_32
+                    }
+                    '7','8' -> {
+                        sprite_height = sprites.SIZE_64
+                    }
+                }    
+            }
+            '3' -> {
+                strings.append(defaultspritefilename, "resource/sp32x")
+                linespace()
+                txt.print(" Sprites that are 32 pixels wide")
+                linespace()
+                txt.print(" 1. 32x8   16 color")
+                linespace()
+                txt.print(" 2. 32x8  256 color")
+                linespace()
+                txt.print(" 3. 32x16  16 color")
+                linespace()
+                txt.print(" 4. 32x16 256 color")
+                linespace()
+                txt.print(" 5. 32x32  16 color")
+                linespace()
+                txt.print(" 6. 32x32 256 color")
+                linespace()
+                txt.print(" 7. 32x64  16 color")
+                linespace()
+                txt.print(" 8. 32x64 256 color")
+                linespace()
+                txt.print(" ESC to exit")
+                linespace()
+                txt.print(" Select the sprite size and colors  ")
+                do {
+                    key = txt.waitkey()
+                    if key == $1B {
+                        cx16.kbdbuf_put(' ')
+                        return ; ESC key
+                    }
+                    if key in "12345678" {
+                        item = key
+                    } else {
+                        txt.bell()
+                        item = 0
+                    }
+                } until item != 0
+
+                sprite_width = sprites.SIZE_32
+                sprite_bit_depth = sprites.COLORS_256
+                is4bit = false
+                if item & $01 == $01 {
+                    is4bit = true
+                    sprite_bit_depth = sprites.COLORS_16
+                }                
+                when item {
+                    '1','2' -> {
+                        sprite_height = sprites.SIZE_8
+                    }
+                    '3','4' -> {
+                        sprite_height = sprites.SIZE_16
+                    }
+                    '5','6' -> {
+                        sprite_height = sprites.SIZE_32
+                    }
+                    '7','8' -> {
+                        sprite_height = sprites.SIZE_64
+                    }
+                }  
+            }  
+            '4' -> {
+                strings.append(defaultspritefilename, "resource/sp64x")
+                linespace()
+                txt.print(" Sprites that are 64 pixels wide")
+                linespace()
+                txt.print(" 1. 64x8   16 color")
+                linespace()
+                txt.print(" 2. 64x8  256 color")
+                linespace()
+                txt.print(" 3. 64x16  16 color")
+                linespace()
+                txt.print(" 4. 64x16 256 color")
+                linespace()
+                txt.print(" 5. 64x32  16 color")
+                linespace()
+                txt.print(" 6. 64x32 256 color")
+                linespace()
+                txt.print(" 7. 64x64  16 color")
+                linespace()
+                txt.print(" 8. 64x64 256 color")
+                linespace()
+                txt.print(" ESC to exit")
+                linespace()
+                txt.print(" Select the sprite size and colors  ")
+                do {
+                    key = txt.waitkey()
+                    if key == $1B {
+                        cx16.kbdbuf_put(' ')
+                        return ; ESC key
+                    }
+                    if key in "12345678" {
+                        item = key
+                    } else {
+                        txt.bell()
+                        item = 0
+                    }
+                } until item != 0
+
+                sprite_width = sprites.SIZE_64
+                sprite_bit_depth = sprites.COLORS_256
+                is4bit = false
+                if item & $01 == $01 {
+                    is4bit = true
+                    sprite_bit_depth = sprites.COLORS_16
+                }                
+                when item {
+                    '1','2' -> {
+                        sprite_height = sprites.SIZE_8
+                    }
+                    '3','4' -> {
+                        sprite_height = sprites.SIZE_16
+                    }
+                    '5','6' -> {
+                        sprite_height = sprites.SIZE_32
+                    }
+                    '7','8' -> {
+                        sprite_height = sprites.SIZE_64
+                    }
+                }    
+            }
+        }
+
+        when item {
+            '1','2' -> strings.append(defaultspritefilename, "8x")
+            '3','4' -> strings.append(defaultspritefilename, "16x")
+            '5','6' -> strings.append(defaultspritefilename, "32x")
+            '7','8' -> strings.append(defaultspritefilename, "64x")
+        }
+
+        if is4bit {
+            strings.append(defaultspritefilename, "16.bin")
+        } else {
+            strings.append(defaultspritefilename, "256.bin")
+        }
+
+        txt.cls()
+        linespace() 
+        txt.print(" Enter the name of the sprite to convert, empty name for a test sprite. ")
+        linespace()
+  
+        txt.column(1)
+        txt.input_chars(spritefilename)
+
+        if spritefilename[0] == 0 {
+            strings.append(spritefilename, defaultspritefilename)
+        }
+
+        process_sprite()
+
+        if has2x2 {
+            txt.plot(2,1)
+            txt.print(" For the 2x2 Tile Set")
+            linespace()
+            cx16.r0L = 0
+            if zero_tile_blank(TILE_VRAM_BANK2, TILE_VRAM_ADDR2, 64) {
+                cx16.r0L |= $08
+            } else if is4bit and zero_tile_blank(TILE_VRAM_BANK2, TILE_VRAM_ADDR2, 32) {
+                cx16.r0L |= $04
+            }
+            when cx16.r0L {
+                $00 -> {
+                    txt.print(" This Tile Set \x1c\x01\x05is not suitable\x1f\x01\x05 for the first tile in any tile bank.")
+                }
+                $04 -> {
+                    txt.print(" This Tile Set \x9e\x01is suitable only\x01\x05 for the first tile in a 4-bit tile bank.")
+                }
+                $08 -> {
+                    txt.print(" This Tile Set \x1e\x01\x05is suitable\x1f\x01\x05 for the first tile in any tile bank.")    
+                }
+            }            
+
+            tsfilename[0] = 0
+            linespace()
+            txt.print(" Enter a name for the Tile Set, press enter alone to skip saving the Tile Set.")
+            linespace()
+            txt.column(1)
+            txt.input_chars(tsfilename)
+
+            if tsfilename[0] != 0 {
+                ; save the tile set to a file
+                vsave_raw(tsfilename, 
+                          TILE_VRAM_BANK2, 
+                          TILE_VRAM_ADDR2, 
+                          if is4bit TILE_VRAM_SIZE2 / 2 
+                          else TILE_VRAM_SIZE2)
+            }
+
+            linespace()
+            txt.print(" Press any key to continue ")
+            txt.waitkey()
+            txt.cls()
+        }
+
+        txt.plot(2,1)
+        txt.print(" For the 8x8 Tile Set")
+        linespace()
+        if zero_tile_blank(TILE_VRAM_BANK1, TILE_VRAM_ADDR1, 64) {
+            cx16.r0L |= $08
+        } else if is4bit and zero_tile_blank(TILE_VRAM_BANK1, TILE_VRAM_ADDR1, 32) {
+            cx16.r0L |= $04
+        }
+        when cx16.r0L {
+            $00 -> {
+                txt.print(" This Tile Set \x1c\x01\x05is not suitable\x1f\x01\x05 for the first tile in any tile bank.")
+            }
+            $04 -> {
+                txt.print(" This Tile Set \x9e\x01is suitable only\x01\x05 for the first tile in a 4-bit tile bank.")
+            }
+            $08 -> {
+                txt.print(" This Tile Set \x1e\x01\x05is suitable\x1f\x01\x05 for the first tile in any tile bank.")    
+            }
+        }            
+        
+        tsfilename[0] = 0
+        linespace()
+        txt.print(" Enter a name for the Tile Set, press enter alone to skip saving the Tile Set.")
+        linespace()
+        txt.column(1)
+        txt.input_chars(tsfilename)
+
+        if tsfilename[0] != 0 {
+            ; save the tile set to a file
+            vsave_raw(tsfilename, 
+                        TILE_VRAM_BANK1, 
+                        TILE_VRAM_ADDR1, 
+                        if is4bit TILE_VRAM_SIZE1 / 2 
+                        else TILE_VRAM_SIZE1)
+        }
+
+        linespace()
+        txt.print(" Press any key to continue ")
+        txt.waitkey()
+
+        cx16.kbdbuf_put(' ')
+        sprites.reset(1,5)         
+    }   
+
+    sub linespace() {
+        repeat 2 txt.nl()
+    }
+
+    sub process_sprite() {
+        word angle = 0
+
+        ; sprite 64
+        sprites.init(SPRITE_64, SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1, 
+                        sprites.SIZE_64, sprites.SIZE_64, sprite_bit_depth, 0)
+
+        ; sprite 16  
+        sprites.init(SPRITE_16, SPRITE_VRAM_BANK2, SPRITE_VRAM_ADDR2, 
+                        sprites.SIZE_16, sprites.SIZE_16, sprite_bit_depth, 0)
+                        
+        ; grid 64
+        sprites.init(SPRITE_GRID_64, SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3, 
+                        sprites.SIZE_64, sprites.SIZE_64, sprites.COLORS_256, 0)
+                        
+        ; grid 16                         
+        sprites.init(SPRITE_GRID_16, SPRITE_VRAM_BANK4, SPRITE_VRAM_ADDR4, 
+                        sprites.SIZE_16, sprites.SIZE_16, sprites.COLORS_256, 0)
+                        
+        ; original sprite                         
+        sprites.init(SPRITE_ORIGINAL, SPRITE_VRAM_BANK5, SPRITE_VRAM_ADDR5, 
+                        sprite_width, sprite_height, sprite_bit_depth, 0)
+
+        ubyte ccrc
+        ; create a context for each tile set          
+        ccrc = vts.create_context( context1, ; sprite 64
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1,
+                            SPRITE_VRAM_BANK1, SPRITE_VRAM_ADDR1,
+                            64, is4bit, TILE_VRAM_OFFSET1)      
+
+        void main.check_ccrc(1, ccrc)                                                                   
+
+        ccrc = vts.create_context( context2, ; sprite 16
+                            TILE_VRAM_BANK1, TILE_VRAM_ADDR1 ,
+                            SPRITE_VRAM_BANK2, SPRITE_VRAM_ADDR2,
+                            16, is4bit, TILE_VRAM_OFFSET2)      
+
+        void main.check_ccrc(2, ccrc)                                                                   
+
+        ; clear all the buffers 
+        verafx.clear(TILE_VRAM_BANK1, TILE_VRAM_ADDR1, $00, $10C0)    
+
+        txt.cls()        
+
+        ; fill the known sprites
+        void check_vload("resource/spgrid64.bin", SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3)
+        void check_vload("resource/spgrid16.bin", SPRITE_VRAM_BANK4, SPRITE_VRAM_ADDR4)
+        void check_vload(spritefilename, SPRITE_VRAM_BANK5, SPRITE_VRAM_ADDR5)
+
+        ; show the original sprite            
+        sprites.pos(SPRITE_ORIGINAL, POS_ORIGINAL_X, POS_ORIGINAL_Y)   
+
+        ; show grid 64
+        sprites.pos(SPRITE_GRID_64, POS_64_X, POS_64_Y)
+        ; show the orignal within grid 64
+        sprites.pos(SPRITE_64, POS_64_X, POS_64_Y)
+
+        ; convert the original sprite to a 8x8 tile set 
+        grow_sprite_to_ts(SPRITE_ORIGINAL,
+                            TILE_VRAM_BANK1, 
+                            TILE_VRAM_ADDR1, 
+                            if is4bit TILE_VRAM_SIZE1/2 else TILE_VRAM_SIZE1)
+
+        vts.select(context1)
+        vts.rotate(angle)
+
+        ; show the orignal within grid 64
+        sprites.pos(SPRITE_64, POS_64_X, POS_64_Y)
+
+        ; show grid 16 when needed
+        sprites.hide(SPRITE_GRID_16)
+        has2x2 = false
+        if sprite_width | sprite_height <= sprites.SIZE_16 {
+            has2x2 = true
+            sprites.show(SPRITE_GRID_16)
+            sprites.pos(SPRITE_GRID_16, POS_16_X, POS_16_Y)
+
+            ; convert the original sprite to a 2x2 tile set 
+            grow_sprite_to_ts(SPRITE_ORIGINAL,
+                                TILE_VRAM_BANK2, 
+                                TILE_VRAM_ADDR2, 
+                                if is4bit TILE_VRAM_SIZE2/2 else TILE_VRAM_SIZE2)
+
+            vts.select(context2)
+            vts.rotate(angle)
+
+            sprites.pos(SPRITE_16, POS_16_X, POS_16_Y)
+
+            sys.wait(20)
+
+            for angle in 0 to 360 * 3 step 6 {
+                vts.select(context2)
+                vts.rotate(angle)
+                repeat 1200 %asm{{nop}}  ; goes too fast without a delay
+            }
+        }    
+
+        for angle in 0 to 360 * 3 step 6 {
+            vts.select(context1)
+            vts.rotate(angle)
+        }
+
+    }
+
+    sub grow_sprite_to_ts(ubyte source_sprite, ubyte bank, uword addr, uword size) {
+        ubyte rc = vts.grow_sprite_to_tile_set(source_sprite, bank, addr, size)
+        if rc != vts.SPRITE_TO_TILE_OK {
+            txt.print("  Sprite to tile set error ")
+            if rc == vts.SPRITE_TO_TILE_SIZE_ERROR {
+                txt.print("SPRITE_TO_TILE_SIZE_ERROR")
+            } else {
+                txt.print("SPRITE_TO_TILE_BIT_SIZE_ERROR")                    
+            }
+            txt.nl()
+        }
+    }
+
+    sub check_vload(str filename, ubyte bank, uword address) {
+        if not diskio.vload_raw(filename, bank, address) {
+            txt.print("vload_raw returned false for filename ")
+            txt.print(filename)
+            txt.nl()
+        }
+    }
+    
+    ; check if the zero tile in the tile set is blank
+    sub zero_tile_blank(ubyte bank, uword addr, ubyte reps) -> bool {
+        bool blank = true
+        cx16.vaddr(bank,addr,0,1)
+        repeat reps {
+            if cx16.VERA_DATA0 != 0 {
+                blank = false
+                break
+            }
+        }
+        return blank
+    }
+
+    ; save vram to a file 
+    sub vsave_raw(uword filenameptr, ubyte startbank, uword startaddress, uword savesize) -> bool {
+
+        if diskio.exists(filenameptr) {
+            linespace()
+            txt.bell()
+            txt.print(" This Tile Set exists, do you want to overwrite? (Y/N)  ")
+            repeat {
+                key = txt.waitkey()
+                if key in "ynYN" {
+                    if key in "yY" {
+                        diskio.delete(filenameptr)
+                        linespace()
+                        txt.print(" The Tile Set will be overwritten ")
+                        break
+                    } else {
+                        linespace()
+                        txt.print(" The Tile Set will not be overwritten ")
+                        return false
+                    }
+                }
+            } 
+        }
+
+        if not diskio.f_open_w(filenameptr) {
+            return false
+        }
+;        defer diskio.f_close_w()
+        cbm.CHKOUT(diskio.WRITE_IO_CHANNEL)   ; MCIOUT requires this
+
+        ; set VERA_DATA0 to point to the startbank and address
+        cx16.VERA_CTRL = 0
+        cx16.VERA_ADDR_H = startbank | %0001_0000  ; INC 1
+        cx16.VERA_ADDR   = startaddress
+
+        while savesize > 0 {
+            void, cx16.r8 = cx16.MCIOUT(lsb(savesize), &cx16.VERA_DATA0, true)
+            if_cs return internal_fallback() ; MCIOUT is not in all ROMS
+            savesize -= cx16.r8
+        }
+        diskio.f_close_w()
+        linespace()
+        txt.print(" Tile Set saved")
+
+        return true
+
+        sub internal_fallback() -> bool {
+            repeat savesize {
+                cbm.CHROUT(cx16.VERA_DATA0)
+            }
+            diskio.f_close_w()
+            linespace()
+            txt.print(" Tile Set saved")
+            return true
+        }    
+    }
+
+}

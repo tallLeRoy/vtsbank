@@ -11,8 +11,11 @@ vts {
     
     const uword VTS_TABLE = $A000
 
+    ; the functions in this feature make frequent use of R0-R15
+    ; although not part of the declaration, they may clobber R0-R15
+
     ; called by load_vts_into_bank for bank initialization
-    extsub @bank vtsbank VTS_TABLE + 0 = init()
+    extsub @bank vtsbank VTS_TABLE + 0 = init() clobbers(A,X,Y) 
 
     ; use this routine to load the code into a ram bank
     ; returns the end load address, must be higher than $BF0B
@@ -42,7 +45,7 @@ vts {
                                     ; four_bit = 1 for 16 color, 0 for 256 color sprite
                                     bool  four_bit @ R9,
                                     ; tile set offset from tile_bank : tile_addr
-                                    uword  tile_offest @R10 ) -> ubyte @ A
+                                    uword  tile_offest @R10 ) clobbers(X,Y) -> ubyte @ A
 
         ; return codes from create_context
         const ubyte VTS_CREATE_OK                     = 0
@@ -56,25 +59,36 @@ vts {
                                                           ; 64x64 256 color 12288
                                                           ; to allow a valid tile map
 
-    extsub @bank vtsbank VTS_TABLE + 6 = select(uword context @ R3)
+    extsub @bank vtsbank VTS_TABLE + 6 = select(uword context @ R3) clobbers(A,X,Y)
 
     ; scale of 1.0 keeps the original size. 1.0 is the default
     ; scale less than 1.0 increases the size, the practical limit is around 0.75 
     ; scale more than 1.0 decreases the size, the practical limit is around 3.0
-    extsub @bank vtsbank VTS_TABLE + 9 = scale(float fscale @ FAC1) ; default is 1.0
+    extsub @bank vtsbank VTS_TABLE + 9 = scale(float fscale @ FAC1) clobbers(A,X,Y) ; default is 1.0
 
     ; degree may be positive or negative
-    extsub @bank vtsbank VTS_TABLE + 12 = rotate(word degree @ AY)
-    extsub @bank vtsbank VTS_TABLE + 15 = rotate_f(float degree @ FAC1) ; address of the degrees float
-    extsub @bank vtsbank VTS_TABLE + 18 = rotate_r(float radians @ FAC1, bool clockwise @ R0)
-    extsub @bank vtsbank VTS_TABLE + 21 = rotate_p(float angle @ FAC1, bool clockwise @ R0) ; multiple of PI
-    extsub @bank vtsbank VTS_TABLE + 24 = shear_v(word extent @ AY)
-    extsub @bank vtsbank VTS_TABLE + 27 = shear_h(word extent @ AY)
+    extsub @bank vtsbank VTS_TABLE + 12 = rotate(word degree @ AY) clobbers(X) 
+    extsub @bank vtsbank VTS_TABLE + 15 = rotate_f(float degree @ FAC1) clobbers(A,X,Y) ; address of the degrees float
+    extsub @bank vtsbank VTS_TABLE + 18 = rotate_r(float radians @ FAC1, bool clockwise @ R0) clobbers(A,X,Y)
+    extsub @bank vtsbank VTS_TABLE + 21 = rotate_p(float angle @ FAC1, bool clockwise @ R0) clobbers(A,X,Y) ; multiple of PI
+    extsub @bank vtsbank VTS_TABLE + 24 = shear_v(word extent @ AY) clobbers(X)
+    extsub @bank vtsbank VTS_TABLE + 27 = shear_h(word extent @ AY) clobbers(X)
 
     ; reset the VERA tile map transforms
-    extsub @bank vtsbank VTS_TABLE + 30 = reset_fx() 
+    extsub @bank vtsbank VTS_TABLE + 30 = reset_fx() clobbers(A,X,Y)
 
     ; create a tile set from a sprite when the context is set
-    extsub @bank vtsbank VTS_TABLE + 33 = sprite_to_tile_set() 
-    
+    ; 4-bit $80 or $800; 8-bit $100 or $1000
+    extsub @bank vtsbank VTS_TABLE + 33 = sprite_to_tile_set(uword ts_size @ AY) clobbers(X) -> ubyte @ A 
+        const ubyte SPRITE_TO_TILE_OK            = 0
+        const ubyte SPRITE_TO_TILE_SIZE_ERROR     = 1
+        const ubyte SPRITE_TO_TILE_BIT_SIZE_ERROR = 2
+
+    ; when the sprite and tile set dimensions are mismatched
+    ; same return codes as sprite_to_tile_set() shown above    
+    extsub @bank vtsbank VTS_TABLE + 36 = grow_sprite_to_tile_set(ubyte sprite_number @ R0,
+                                                                 ubyte tileset_bank   @ R1,
+                                                                 uword tileset_addr   @ R2,
+                                                                 uword tileset_size   @ R3 ) clobbers(X,Y) -> ubyte @ A 
+                                                                 
 }
