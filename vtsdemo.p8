@@ -110,7 +110,7 @@ main {
             }            
 
             ; clear out the sprite registers we used
-            void sprites.reset(1,12)        
+            sprites.reset(1,12)        
 
             ; display the choices for the user
             repeat 3 txt.nl()
@@ -310,7 +310,7 @@ main {
                                     SPRITE_VRAM_BANK, SPRITE_VRAM_ADDR,
                                     ssize, fourbit, tile_offset)
 
-                check_ccrc(1, ccrc)
+                void check_ccrc(1, ccrc)
 
                 ; focus vts on this tile set
                 vts.select(context)
@@ -1046,7 +1046,7 @@ dozen {
         txt.plot(6,52)
         txt.print(" Press any key to return to the menu ")                                                              
 
-        txt.waitkey()
+        void txt.waitkey()
         txt.cls()
         cx16.kbdbuf_put(' ')
 
@@ -1113,7 +1113,7 @@ frogfly {
 
     word flyX 
     word flyY 
-    byte wingwait = 2
+    const byte wingwait = 2
     uword pathentries = 0
     byte[6] p_entry = [0] * 6
     word degree = 0
@@ -1253,7 +1253,7 @@ frogfly {
                 }
                 flyY -= p_entry[3]
                 sprites.pos(2,flyX, flyY)
-                scale += p_entry[3] * 0.0032
+                scale += p_entry[3] as float * 0.0032
             }
             if i % 16 == 0 {
                 if 360 > flyX or flyX < 280 {
@@ -1401,7 +1401,7 @@ ghosting {
 
         ; make a new tile set from the sheared ghost 
         vts.select(context2)
-        vts.sprite_to_tile_set(TILE_VRAM_SIZE2)
+        void vts.sprite_to_tile_set(TILE_VRAM_SIZE2)
 
         ; show the new sheared ghost tile set
         vts.rotate(angle)
@@ -1463,7 +1463,7 @@ ghosting {
         txt.plot(6,52)
         txt.print(" Press any key to return to the menu ")                                                              
 
-        txt.waitkey()
+        void txt.waitkey()
         txt.cls()
         cx16.kbdbuf_put(' ')
 
@@ -1582,7 +1582,7 @@ conversions {
         defaultspritefilename[0] = 0
         when group {
             '1' -> {
-                strings.append(defaultspritefilename, "resource/sp8x")
+                void strings.append(defaultspritefilename, "resource/sp8x")
                 linespace()
                 txt.print(" Sprites that are 8 pixels wide")
                 linespace()
@@ -1642,7 +1642,7 @@ conversions {
                 }    
             }
             '2' -> {
-                strings.append(defaultspritefilename, "resource/sp16x")
+                void strings.append(defaultspritefilename, "resource/sp16x")
                 linespace()
                 txt.print(" Sprites that are 16 pixels wide")
                 linespace()
@@ -1702,7 +1702,7 @@ conversions {
                 }    
             }
             '3' -> {
-                strings.append(defaultspritefilename, "resource/sp32x")
+                void strings.append(defaultspritefilename, "resource/sp32x")
                 linespace()
                 txt.print(" Sprites that are 32 pixels wide")
                 linespace()
@@ -1762,7 +1762,7 @@ conversions {
                 }  
             }  
             '4' -> {
-                strings.append(defaultspritefilename, "resource/sp64x")
+                void strings.append(defaultspritefilename, "resource/sp64x")
                 linespace()
                 txt.print(" Sprites that are 64 pixels wide")
                 linespace()
@@ -1824,16 +1824,16 @@ conversions {
         }
 
         when item {
-            '1','2' -> strings.append(defaultspritefilename, "8x")
-            '3','4' -> strings.append(defaultspritefilename, "16x")
-            '5','6' -> strings.append(defaultspritefilename, "32x")
-            '7','8' -> strings.append(defaultspritefilename, "64x")
+            '1','2' -> void strings.append(defaultspritefilename, "8x")
+            '3','4' -> void strings.append(defaultspritefilename, "16x")
+            '5','6' -> void strings.append(defaultspritefilename, "32x")
+            '7','8' -> void strings.append(defaultspritefilename, "64x")
         }
 
         if is4bit {
-            strings.append(defaultspritefilename, "16.bin")
+            void strings.append(defaultspritefilename, "16.bin")
         } else {
-            strings.append(defaultspritefilename, "256.bin")
+            void strings.append(defaultspritefilename, "256.bin")
         }
 
         txt.cls()
@@ -1842,10 +1842,10 @@ conversions {
         linespace()
   
         txt.column(1)
-        txt.input_chars(spritefilename)
+        void txt.input_chars(spritefilename)
 
         if spritefilename[0] == 0 {
-            strings.append(spritefilename, defaultspritefilename)
+            void strings.append(spritefilename, defaultspritefilename)
         }
 
         process_sprite()
@@ -1877,11 +1877,11 @@ conversions {
             txt.print(" Enter a name for the Tile Set, press enter alone to skip saving the Tile Set.")
             linespace()
             txt.column(1)
-            txt.input_chars(tsfilename)
+            void txt.input_chars(tsfilename)
 
             if tsfilename[0] != 0 {
                 ; save the tile set to a file
-                vsave_raw(tsfilename, 
+                void vsave_raw(tsfilename, 
                           TILE_VRAM_BANK2, 
                           TILE_VRAM_ADDR2, 
                           if is4bit TILE_VRAM_SIZE2 / 2 
@@ -1890,7 +1890,7 @@ conversions {
 
             linespace()
             txt.print(" Press any key to continue ")
-            txt.waitkey()
+            void txt.waitkey()
             txt.cls()
         }
 
@@ -1919,11 +1919,11 @@ conversions {
         txt.print(" Enter a name for the Tile Set, press enter alone to skip saving the Tile Set.")
         linespace()
         txt.column(1)
-        txt.input_chars(tsfilename)
+        void txt.input_chars(tsfilename)
 
         if tsfilename[0] != 0 {
             ; save the tile set to a file
-            vsave_raw(tsfilename, 
+            void vsave_raw(tsfilename, 
                         TILE_VRAM_BANK1, 
                         TILE_VRAM_ADDR1, 
                         if is4bit TILE_VRAM_SIZE1 / 2 
@@ -1932,7 +1932,7 @@ conversions {
 
         linespace()
         txt.print(" Press any key to continue ")
-        txt.waitkey()
+        void txt.waitkey()
 
         cx16.kbdbuf_put(' ')
         sprites.reset(1,5)         
@@ -1987,9 +1987,9 @@ conversions {
         txt.cls()        
 
         ; fill the known sprites
-        void check_vload("resource/spgrid64.bin", SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3)
-        void check_vload("resource/spgrid16.bin", SPRITE_VRAM_BANK4, SPRITE_VRAM_ADDR4)
-        void check_vload(spritefilename, SPRITE_VRAM_BANK5, SPRITE_VRAM_ADDR5)
+        check_vload("resource/spgrid64.bin", SPRITE_VRAM_BANK3, SPRITE_VRAM_ADDR3)
+        check_vload("resource/spgrid16.bin", SPRITE_VRAM_BANK4, SPRITE_VRAM_ADDR4)
+        check_vload(spritefilename, SPRITE_VRAM_BANK5, SPRITE_VRAM_ADDR5)
 
         ; show the original sprite            
         sprites.pos(SPRITE_ORIGINAL, POS_ORIGINAL_X, POS_ORIGINAL_Y)   
