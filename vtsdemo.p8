@@ -995,7 +995,6 @@ dozen {
             xpos += 40
         }
 
-
         ; time the following 2,164 rotations
 
         void txt.waitkey()
