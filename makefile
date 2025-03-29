@@ -21,10 +21,10 @@ PCCARGS = -asmlist -target cx16
 
 all: $(bin) $(prg)
 
-%.prg: %.p8
-	$(PCC) $(PCCARGS) -emu "$<"
-
 %.bin: %.p8
+	$(PCC) $(PCCARGS) -ignorefootguns "$<"
+
+%.prg: %.p8
 	$(PCC) $(PCCARGS) "$<"
 
 clean:
